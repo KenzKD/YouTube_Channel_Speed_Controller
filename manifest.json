@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "YouTube Channel Speed Controller",
+  "version": "1.0",
+  "description": "Control Playback Speed and Save per-Channel Speed settings.",
+  "permissions": ["storage", "tabs", "https://www.youtube.com/*"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}
