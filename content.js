@@ -1,120 +1,70 @@
-const DEFAULT_SPEED = 1.0;
+const DEFAULT_SPEED = 2.0;
 
-function applySpeed(speed) {
-  const video = document.querySelector("video");
-  if (video) {
-    video.playbackRate = speed;
+const videoEl = () => document.querySelector("video");
+const channelName = () => document.querySelector("ytd-channel-name a")?.textContent.trim();
+
+async function setSpeed(speed, label) {
+  const video = videoEl();
+  if (!video) return;
+
+  // Apply speed once
+  video.playbackRate = speed;
+
+  // Update label
+  if (label) label.textContent = speed.toFixed(2) + "x";
+
+  // Save only if not default
+  const ch = channelName();
+  if (ch) {
+    const { channelSpeeds = {} } = await browser.storage.local.get("channelSpeeds");
+    if (speed === DEFAULT_SPEED) delete channelSpeeds[ch];
+    else channelSpeeds[ch] = speed;
+    await browser.storage.local.set({ channelSpeeds });
   }
 }
 
-function getChannelName() {
-  const el = document.querySelector("ytd-channel-name a");
-  return el ? el.textContent.trim() : null;
-}
-
-browser.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "setSpeed") {
-    applySpeed(msg.speed);
-  }
-});
-
-// Observe channel changes
-const observer = new MutationObserver(() => {
-  const channel = getChannelName();
-  if (channel) {
-    browser.runtime.sendMessage({ action: "channelDetected", channel });
-  }
-});
-observer.observe(document.body, { childList: true, subtree: true });
-
-// 🖼️ Create UI overlay
 async function createSpeedControls() {
   if (document.getElementById("yt-speed-controls")) return;
-
   const controls = document.querySelector(".ytp-right-controls");
-  if (!controls) return;
+  if (!controls || !videoEl()) return;
 
-  const container = document.createElement("div");
-  container.id = "yt-speed-controls";
-  container.style.display = "flex";
-  container.style.alignItems = "center";
-  container.style.gap = "15px";
-  container.style.color = "white";
-  container.style.cursor = "pointer";
+  const container = Object.assign(document.createElement("div"), {
+    id: "yt-speed-controls",
+    style: "display:flex;align-items:center;gap:15px;color:white;cursor:pointer;"
+  });
 
-  const minusBtn = document.createElement("span");
-  minusBtn.textContent = "−";
-  minusBtn.style.fontSize = "18px";
+  const minusBtn = Object.assign(document.createElement("span"), { textContent: "-", style: "font-size:18px" });
+  const plusBtn  = Object.assign(document.createElement("span"), { textContent: "+", style: "font-size:18px" });
+  const label    = Object.assign(document.createElement("span"), { textContent: "…", style: "font-size:14px" });
 
-  const plusBtn = document.createElement("span");
-  plusBtn.textContent = "+";
-  plusBtn.style.fontSize = "18px";
-
-  const label = document.createElement("span");
-  label.textContent = "…"; // temporary placeholder
-  label.style.fontSize = "14px";
-
-  container.appendChild(minusBtn);
-  container.appendChild(label);
-  container.appendChild(plusBtn);
-
+  [minusBtn, label, plusBtn].forEach(el => container.appendChild(el));
   controls.insertBefore(container, controls.firstChild);
 
-  const video = document.querySelector("video");
-
-  function updateLabel() {
-    label.textContent = video.playbackRate.toFixed(2) + "x";
+  // Decide speed but don’t apply yet
+  let speed = DEFAULT_SPEED;
+  const ch = channelName();
+  if (ch) {
+    const { channelSpeeds = {} } = await browser.storage.local.get("channelSpeeds");
+    if (channelSpeeds[ch]) speed = channelSpeeds[ch];
   }
 
-    // Initial load of saved speed
-  const channel = getChannelName();
-  if (channel) {
-    const settings = await browser.storage.local.get("channelSpeeds");
-    const channelSpeeds = settings.channelSpeeds || {};
-    if (channelSpeeds[channel]) {
-      video.playbackRate = channelSpeeds[channel];
-    }
-  }
-    
-    setTimeout(async () => updateLabel(), 1000);
+  // Apply speed
+  setSpeed(speed, label);
 
-  // Button events
-  minusBtn.addEventListener("click", async () => {
-    video.playbackRate = Math.max(video.playbackRate - 0.25, 0.25);
-    updateLabel();
-    saveSpeed(video.playbackRate);
-  });
+  const changeSpeed = (delta) => {
+    const newSpeed = Math.min(Math.max(videoEl().playbackRate + delta, 0.25), 4);
+    setSpeed(newSpeed, label);
+  };
 
-  plusBtn.addEventListener("click", async () => {
-    video.playbackRate = Math.min(video.playbackRate + 0.25, 4);
-    updateLabel();
-    saveSpeed(video.playbackRate);
-  });
+  minusBtn.onclick = () => changeSpeed(-0.25);
+  plusBtn.onclick  = () => changeSpeed(0.25);
 
-  // Scroll interaction
-  container.addEventListener("wheel", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const step = 0.25;
-    if (e.deltaY < 0) {
-      video.playbackRate = Math.min(video.playbackRate + step, 4);
-    } else {
-      video.playbackRate = Math.max(video.playbackRate - step, 0.25);
-    }
-    updateLabel();
-    saveSpeed(video.playbackRate);
+  container.addEventListener("wheel", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    changeSpeed(e.deltaY < 0 ? 0.25 : -0.25);
   }, { passive: false });
-}
 
-function saveSpeed(speed) {
-  const channel = getChannelName();
-  if (channel) {
-    browser.storage.local.get("channelSpeeds").then((settings) => {
-      const channelSpeeds = settings.channelSpeeds || {};
-      channelSpeeds[channel] = speed;
-      browser.storage.local.set({ channelSpeeds });
-    });
-  }
+  // setSpeed(videoEl().playbackRate, label);
 }
 
 // Run once video loads
