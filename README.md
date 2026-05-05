@@ -21,7 +21,7 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 1. Install the [Enhancer for YouTube™](https://www.mrfdev.com/enhancer-for-youtube) extension for Chrome, Edge, or Firefox.
 2. Open the EfYT options page by clicking the extension icon in your browser toolbar.
 3. Scroll down to the **Custom Script** section.
-4. Copy the entire contents of `efyt-channel-speed.js` and paste it into the Custom Script text area.
+4. Copy the entire contents of `YouTube_Channel_Speed_Controller.js` and paste it into the Custom Script text area.
 5. Click **Save**.
 6. Tick mark the box next to "Automatically execute the script when YouTube is loaded in a tab"
 7. Reload any open YouTube tabs.
