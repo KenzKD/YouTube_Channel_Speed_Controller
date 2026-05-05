@@ -1,4 +1,4 @@
-# EfYT – Remember Speed Per Channel
+# YouTube Channel Speed Controller
 
 Automatically saves and restores your preferred playback speed on a per-channel basis when using the [Enhancer for YouTube™](https://www.mrfdev.com/enhancer-for-youtube) (EfYT) browser extension.
 
@@ -11,7 +11,7 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 
 - When you change the playback speed on a channel using EfYT's speed buttons or scrolling over the speed icon, that speed is saved automatically.
 - The next time you visit a video from that channel, the saved speed is restored using EfYT's own `+` / `−` buttons — keeping EfYT's internal state fully in sync.
-- If you set the speed back to your EfYT global default, the channel override is deleted automatically.
+- If you set the speed back to your EfYT global default (I keep mine at 2x Speed), the channel override is deleted automatically.
 - The speed button tooltip updates on hover to reflect the actual current speed.
 
 ---
