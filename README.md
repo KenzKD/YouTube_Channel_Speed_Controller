@@ -1,12 +1,15 @@
 # EfYT – Remember Speed Per Channel
 
-Automatically saves and restores your preferred playback speed on a per-channel basis when using the [Enhancer for YouTube™](https://www.mrfdev.com/enhancer-for-youtube) browser extension.
+Automatically saves and restores your preferred playback speed on a per-channel basis when using the [Enhancer for YouTube™](https://www.mrfdev.com/enhancer-for-youtube) (EfYT) browser extension.
+
+> [!CAUTION]
+> Vibe-coded at 2am with Claude Sonnet 4.6. It works for me. No promises it works for you. Read the code first.
 
 ---
 
 ## How It Works
 
-- When you change the playback speed on a channel using EfYT's speed buttons, that speed is saved automatically.
+- When you change the playback speed on a channel using EfYT's speed buttons or scrolling over the speed icon, that speed is saved automatically.
 - The next time you visit a video from that channel, the saved speed is restored using EfYT's own `+` / `−` buttons — keeping EfYT's internal state fully in sync.
 - If you set the speed back to your EfYT global default, the channel override is deleted automatically.
 - The speed button tooltip updates on hover to reflect the actual current speed.
@@ -20,7 +23,8 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 3. Scroll down to the **Custom Script** section.
 4. Copy the entire contents of `efyt-channel-speed.js` and paste it into the Custom Script text area.
 5. Click **Save**.
-6. Reload any open YouTube tabs.
+6. Tick mark the box next to "Automatically execute the script when YouTube is loaded in a tab"
+7. Reload any open YouTube tabs.
 
 > **Note:** The script takes effect immediately on the next page navigation. You should see `[EfYT-ChSpeed] Active.` printed in the browser console (F12 → Console) confirming it is running.
 
@@ -28,7 +32,7 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 
 ## Usage
 
-Simply browse YouTube as normal. Whenever you adjust the speed using EfYT's `+` or `−` buttons, the speed for that channel is saved automatically. When you navigate to another video on the same channel, the speed will be restored.
+Simply browse YouTube as normal. Whenever you adjust the speed using EfYT's `+` or `−` buttons or scroll up or down on the speed icon, the speed for that channel is saved automatically. When you navigate to another video on the same channel, the speed will be restored.
 
 No configuration is required.
 
@@ -101,7 +105,3 @@ The console will confirm how many channels were imported:
 - If EfYT is updated and the button IDs (`efyt-speed`, `efyt-speed-plus`, `efyt-speed-minus`) or tooltip class (`ytp-efyt-tooltip`) change, the script may need to be updated to match.
 
 ---
-
-## Credits
-
-Vibe coded with [Claude Sonnet 4.6](https://claude.ai) by Anthropic.
