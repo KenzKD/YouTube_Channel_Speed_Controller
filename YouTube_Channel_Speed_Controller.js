@@ -1,171 +1,252 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v9)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v11)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
-(function () {
-	"use strict";
+(function ()
+{
+    "use strict";
 
-	const APPLY_DELAY_MS = 1500;
-	const EFYT_KEY = "enhancer-for-youtube";
-	const CH_PREFIX = "efyt_ch_speed::";
-	let suppressSave = false;
+    const APPLY_DELAY_MS = 1500;
+    const EFYT_KEY       = "enhancer-for-youtube";
+    const CH_PREFIX      = "efyt_ch_speed::";
+    const CH_SELECTORS   = [
+        "ytd-channel-name a",
+        "#channel-name a",
+        "yt-formatted-string#channel-name a",
+        "#owner a.yt-simple-endpoint[href*='/@']",
+        "a.yt-simple-endpoint[href*='/@']",
+    ];
 
-	// -----------------------------------------------------------
-	// Helpers
-	// -----------------------------------------------------------
+    let suppressSave = false;
+    let video        = null;
 
-	function getEfytDefaultSpeed() {
-		try {
-			const s = JSON.parse(localStorage.getItem(EFYT_KEY));
-			if (s?.speed > 0) return s.speed;
-		} catch (_) {}
-		return 1;
-	}
+    // -----------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------
 
-	function getChannelId() {
-		const link = document.querySelector("ytd-channel-name a") || document.querySelector("#channel-name a") || document.querySelector("yt-formatted-string#channel-name a");
-		try {
-			return link && new URL(link.href).pathname.toLowerCase();
-		} catch (_) {}
-		return null;
-	}
+    function getEfytDefaultSpeed()
+    {
+        try   { const s = JSON.parse(localStorage.getItem(EFYT_KEY)); if (s?.speed > 0) return s.speed; }
+        catch (_) {}
+        return 1;
+    }
 
-	function loadChannelSpeed(id) {
-		const n = parseFloat(localStorage.getItem(CH_PREFIX + id));
-		return !isNaN(n) && n > 0 ? n : null;
-	}
+    function getChannelId()
+    {
+        for (const sel of CH_SELECTORS)
+        {
+            try
+            {
+                const path = new URL(document.querySelector(sel)?.href ?? "").pathname.toLowerCase();
+                if (path.startsWith("/@") || path.startsWith("/channel/")) return path;
+            }
+            catch (_) {}
+        }
+        return null;
+    }
 
-	function saveChannelSpeed(id, speed) {
-		const def = getEfytDefaultSpeed();
-		if (Math.abs(speed - def) < 0.001) {
-			localStorage.removeItem(CH_PREFIX + id);
-			console.log(`[EfYT-ChSpeed] Cleared override for ${id} (matches default ${def}x)`);
-		} else {
-			localStorage.setItem(CH_PREFIX + id, String(speed));
-			console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${id}`);
-		}
-	}
+    function loadChannelSpeed(id)
+    {
+        const n = parseFloat(localStorage.getItem(CH_PREFIX + id));
+        return n > 0 ? n : null;
+    }
 
-	// -----------------------------------------------------------
-	// Step EfYT to target speed using its own +/- buttons
-	// -----------------------------------------------------------
+    function saveChannelSpeed(id, speed)
+    {
+        const def = getEfytDefaultSpeed();
+        if (Math.abs(speed - def) < 0.001)
+        {
+            localStorage.removeItem(CH_PREFIX + id);
+            console.log(`[EfYT-ChSpeed] Cleared override for ${id} (matches default ${def}x)`);
+        }
+        else
+        {
+            localStorage.setItem(CH_PREFIX + id, String(speed));
+            console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${id}`);
+        }
+    }
 
-	function stepToSpeed(targetSpeed) {
-		const video = document.querySelector("video");
-		const plus = document.getElementById("efyt-speed-plus");
-		const minus = document.getElementById("efyt-speed-minus");
-		if (!video || !plus || !minus) return;
-		if (Math.abs(video.playbackRate - targetSpeed) < 0.001) return;
+    // -----------------------------------------------------------
+    // Step EfYT to target speed using its own +/- buttons
+    // -----------------------------------------------------------
 
-		const btn = targetSpeed > video.playbackRate ? plus : minus;
-		const before = video.playbackRate;
-		btn.click();
-		const step = Math.abs(video.playbackRate - before);
-		if (!step) return;
+    function stepToSpeed(target)
+    {
+        const v     = document.querySelector("video");
+        const plus  = document.getElementById("efyt-speed-plus");
+        const minus = document.getElementById("efyt-speed-minus");
+        if (!v || !plus || !minus || Math.abs(v.playbackRate - target) < 0.001) return;
 
-		const remaining = Math.round((targetSpeed - video.playbackRate) / step);
-		const dir = remaining > 0 ? plus : minus;
-		for (let i = 0; i < Math.abs(remaining); i++) dir.click();
-		console.log(`[EfYT-ChSpeed] Stepped to ${video.playbackRate}x`);
-	}
+        const before = v.playbackRate;
+        (target > before ? plus : minus).click();
+        const step = Math.abs(v.playbackRate - before);
+        if (!step) return;
 
-	// -----------------------------------------------------------
-	// Tooltip hover — show live speed in EfYT's own tooltip
-	// -----------------------------------------------------------
+        const clicks = Math.round((target - v.playbackRate) / step);
+        const btn    = clicks > 0 ? plus : minus;
+        for (let i = 0; i < Math.abs(clicks); i++) btn.click();
+        console.log(`[EfYT-ChSpeed] Stepped to ${v.playbackRate}x`);
+    }
 
-	function onSpeedHover() {
-		setTimeout(() => {
-			const video = document.querySelector("video");
-			const tooltip = document.querySelector(".ytp-efyt-tooltip .ytp-tooltip-text");
-			if (video && tooltip) tooltip.textContent = `Speed (${video.playbackRate}x)`;
-		}, 50);
-	}
+    // -----------------------------------------------------------
+    // Main: run on every YouTube navigation
+    // -----------------------------------------------------------
 
-	// -----------------------------------------------------------
-	// Main: run on every YouTube navigation
-	// -----------------------------------------------------------
+    function onRateChange()
+    {
+        if (!suppressSave) saveChannelSpeed(getChannelId(), video.playbackRate);
+    }
 
-	let video = null;
+    function onVideoNavigation()
+    {
+        setTimeout(() =>
+        {
+            const v = document.querySelector("video");
+            if (!v) return;
 
-	function onVideoNavigation() {
-		setTimeout(() => {
-			const newVideo = document.querySelector("video");
-			if (!newVideo) return;
+            if (v !== video)
+            {
+                video?.removeEventListener("ratechange", onRateChange);
+                v.addEventListener("ratechange", onRateChange);
+                video = v;
+            }
 
-			// Re-attach rate listener only if the video element changed
-			if (newVideo !== video) {
-				video?.removeEventListener("ratechange", onRateChange);
-				newVideo.addEventListener("ratechange", onRateChange);
-				video = newVideo;
-			}
+            const speedBtn = document.getElementById("efyt-speed");
+            if (speedBtn)
+            {
+                speedBtn.removeEventListener("mouseenter", onSpeedHover);
+                speedBtn.addEventListener("mouseenter", onSpeedHover);
+            }
 
-			// Re-attach tooltip hover (safe to call repeatedly)
-			const btn = document.getElementById("efyt-speed");
-			if (btn) {
-				btn.removeEventListener("mouseenter", onSpeedHover);
-				btn.addEventListener("mouseenter", onSpeedHover);
-			}
+            const id    = getChannelId();
+            const saved = id && loadChannelSpeed(id);
+            if (!saved) return;
 
-			const id = getChannelId();
-			const saved = id && loadChannelSpeed(id);
-			if (!saved) return;
+            console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
+            suppressSave = true;
+            stepToSpeed(saved);
+            setTimeout(() => { suppressSave = false; }, 500);
+        }, APPLY_DELAY_MS);
+    }
 
-			console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
-			suppressSave = true;
-			stepToSpeed(saved);
-			setTimeout(() => {
-				suppressSave = false;
-			}, 500);
-		}, APPLY_DELAY_MS);
-	}
+    function onSpeedHover()
+    {
+        setTimeout(() =>
+        {
+            const tooltip = document.querySelector(".ytp-efyt-tooltip .ytp-tooltip-text");
+            if (tooltip) tooltip.textContent = `Speed (${video?.playbackRate}x)`;
+        }, 50);
+    }
 
-	function onRateChange() {
-		if (suppressSave) return;
-		const id = getChannelId();
-		if (id) saveChannelSpeed(id, video.playbackRate);
-	}
+    window.addEventListener("yt-navigate-finish", onVideoNavigation);
+    document.readyState === "loading"
+        ? document.addEventListener("DOMContentLoaded", onVideoNavigation)
+        : onVideoNavigation();
 
-	window.addEventListener("yt-navigate-finish", onVideoNavigation);
-	document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", onVideoNavigation) : onVideoNavigation();
+    // -----------------------------------------------------------
+    // Public API — all internals exposed on window.efytSpeed
+    // -----------------------------------------------------------
 
-	// -----------------------------------------------------------
-	// Export / Import — call from DevTools Console on YouTube
-	// -----------------------------------------------------------
+    const chKeys = () =>
+    {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++)
+        {
+            const k = localStorage.key(i);
+            if (k?.startsWith(CH_PREFIX)) keys.push(k);
+        }
+        return keys;
+    };
 
-	window.efytSpeedExport = function () {
-		const out = {};
-		for (let i = 0; i < localStorage.length; i++) {
-			const k = localStorage.key(i);
-			if (k?.startsWith(CH_PREFIX)) out[k.slice(CH_PREFIX.length)] = parseFloat(localStorage.getItem(k));
-		}
-		const json = JSON.stringify(out, null, 2);
-		console.log("%c[EfYT-ChSpeed] Copy the JSON below:", "color:#aaa;font-style:italic");
-		console.log("%c----------------------------------------", "color:#444");
-		console.log(json);
-		console.log("%c----------------------------------------", "color:#444");
-		return out;
-	};
+    window.efytSpeed =
+    {
+        refresh:      () => { console.log("[EfYT-ChSpeed] Manual refresh."); onVideoNavigation(); },
+        getChannelId: () => { const id = getChannelId(); console.log("[EfYT-ChSpeed] Channel ID:", id ?? "(not found)"); return id; },
+        getDefaultSpeed: () => { const s = getEfytDefaultSpeed(); console.log("[EfYT-ChSpeed] Default:", s + "x"); return s; },
 
-	window.efytSpeedImport = function (data) {
-		if (typeof data === "string") {
-			try {
-				data = JSON.parse(data);
-			} catch (_) {
-				console.error("[EfYT-ChSpeed] Import failed — invalid JSON.");
-				return;
-			}
-		}
-		let count = 0;
-		for (const [ch, sp] of Object.entries(data)) {
-			const n = parseFloat(sp);
-			if (!isNaN(n) && n > 0) {
-				localStorage.setItem(CH_PREFIX + ch, String(n));
-				count++;
-			}
-		}
-		console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
-	};
+        getSpeed: (id = getChannelId()) =>
+        {
+            const s = id && loadChannelSpeed(id);
+            console.log(`[EfYT-ChSpeed] Speed for ${id}:`, s ? s + "x" : "(none)");
+            return s;
+        },
 
-	console.log('%c[EfYT-ChSpeed] Active.\n%c  Export: efytSpeedExport()\n%c  Import: efytSpeedImport({"/@channel": 1.5})', "color:#fff;font-weight:bold", "color:#aaa", "color:#aaa");
+        setSpeed: (speed, id = getChannelId()) =>
+        {
+            if (!id) { console.warn("[EfYT-ChSpeed] No channel detected."); return; }
+            saveChannelSpeed(id, speed);
+            stepToSpeed(speed);
+        },
+
+        clearSpeed: (id = getChannelId()) =>
+        {
+            if (!id) { console.warn("[EfYT-ChSpeed] No channel detected."); return; }
+            localStorage.removeItem(CH_PREFIX + id);
+            console.log(`[EfYT-ChSpeed] Cleared speed for ${id}.`);
+        },
+
+        stepToSpeed,
+
+        list: () =>
+        {
+            const rows = chKeys().map(k => ({ channel: k.slice(CH_PREFIX.length), speed: parseFloat(localStorage.getItem(k)) }));
+            rows.length ? console.table(rows) : console.log("[EfYT-ChSpeed] No overrides stored.");
+            return rows;
+        },
+
+        clearAll: () =>
+        {
+            chKeys().forEach(k => localStorage.removeItem(k));
+            console.log(`[EfYT-ChSpeed] Cleared ${chKeys().length === 0 ? "all" : "?"} overrides.`);
+        },
+
+        export: () =>
+        {
+            const out  = Object.fromEntries(chKeys().map(k => [k.slice(CH_PREFIX.length), parseFloat(localStorage.getItem(k))]));
+            const json = JSON.stringify(out, null, 2);
+            console.log("%c[EfYT-ChSpeed] Copy the JSON below:", "color:#aaa;font-style:italic");
+            console.log("%c----------------------------------------", "color:#444");
+            console.log(json);
+            console.log("%c----------------------------------------", "color:#444");
+            return out;
+        },
+
+        import: (data) =>
+        {
+            if (typeof data === "string")
+            {
+                try   { data = JSON.parse(data); }
+                catch (_) { console.error("[EfYT-ChSpeed] Import failed — invalid JSON."); return; }
+            }
+            const count = Object.entries(data).filter(([, sp]) =>
+            {
+                const n = parseFloat(sp);
+                if (isNaN(n) || n <= 0) return false;
+                localStorage.setItem(CH_PREFIX, String(n));
+                return true;
+            }).length;
+            console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
+        },
+
+        help: () => console.log(
+            "%c[EfYT-ChSpeed] Commands:\n" +
+            [
+                "refresh()",
+                "getChannelId()",
+                "getDefaultSpeed()",
+                "getSpeed([id])",
+                "setSpeed(n [,id])",
+                "clearSpeed([id])",
+                "stepToSpeed(n)",
+                "list()",
+                "clearAll()",
+                "export()",
+                "import(obj|json)",
+            ].map(c => `  efytSpeed.${c}`).join("\n"),
+            "color:#fff;font-weight:bold"
+        ),
+    };
+
+    console.log("%c[EfYT-ChSpeed] Active. %cType efytSpeed.help() for commands.", "color:#fff;font-weight:bold", "color:#aaa");
 })();
