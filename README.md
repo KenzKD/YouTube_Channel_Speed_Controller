@@ -33,14 +33,6 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 
 ---
 
-## Usage
-
-Simply browse YouTube as normal. Whenever you adjust the speed using EfYT's `+` or `−` buttons or scroll up or down on the speed icon, the speed for that channel is saved automatically. When you navigate to another video on the same channel, the speed will be restored.
-
-No configuration is required.
-
----
-
 ## Backup & Restore
 
 All saved channel speeds are stored in your browser's `localStorage`. You can export and import them from the **DevTools Console** on any YouTube page.
