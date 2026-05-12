@@ -24,7 +24,7 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 4. Select your Default Playback Speed.
 5. Disable the "Override default playback speeds" option.
 6. Scroll down to the **Custom Script** section.
-7. Copy the entire contents of `YouTube_Channel_Speed_Controller.js` and paste it into the Custom Script text area.
+7. Copy the entire contents of the [YouTube_Channel_Speed_Controller.js](https://github.com/KenzKD/YouTube_Channel_Speed_Controller/blob/main/YouTube_Channel_Speed_Controller.js) and paste it into the Custom Script text area.
 8. Click **Save**.
 9.  Enable the "Automatically execute the script when YouTube is loaded in a tab" option
 10. Reload any open YouTube tabs.
