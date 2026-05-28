@@ -29,7 +29,12 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 9.  Enable the "Automatically execute the script when YouTube is loaded in a tab" option
 10. Reload any open YouTube tabs.
 
-> **Note:** The script takes effect immediately on the next page navigation. You should see `[EfYT-ChSpeed] Active.` printed in the browser console (F12 → Console) confirming it is running.
+> [!TIP]
+> You can learn how to set up keyboard shortcuts for the plugin here: [Manage Extension Shortcuts](https://www.mrfdev.com/manage-extension-shortcuts).
+
+> [!NOTE]
+> - Speeds are stored per browser profile. If you use multiple browsers or profiles, you will need to export and import separately for each one.
+> - The script does not modify EfYT's global default speed setting — it only overrides the speed for the saved channels.
 
 ---
 
@@ -88,15 +93,5 @@ The console will confirm how many channels were imported:
 ```
 [EfYT-ChSpeed] Imported 3 channel(s).
 ```
-
-> **Note:** Importing will overwrite any existing saved speed for channels included in the backup. Channels not present in the backup are left untouched.
-
----
-
-## Notes
-
-- Speeds are stored per browser profile. If you use multiple browsers or profiles, you will need to export and import separately for each one.
-- The script does not modify EfYT's global default speed setting — it only overrides the speed for specific channels.
-- If EfYT is updated and the button IDs (`efyt-speed`, `efyt-speed-plus`, `efyt-speed-minus`) or tooltip class (`ytp-efyt-tooltip`) change, the script may need to be updated to match.
-
----
+> [!CAUTION]
+> Importing will overwrite any existing saved speed for channels included in the backup. Channels not present in the backup are left untouched.
