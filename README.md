@@ -30,7 +30,7 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 10. Reload any open YouTube tabs.
 
 > [!TIP]
-> You can learn how to set up keyboard shortcuts for the plugin here: [Manage Extension Shortcuts](https://www.mrfdev.com/manage-extension-shortcuts).
+> You can learn how to set up keyboard shortcuts for EfYT here: [Manage Extension Shortcuts](https://www.mrfdev.com/manage-extension-shortcuts).
 
 > [!NOTE]
 > - Speeds are stored per browser profile. If you use multiple browsers or profiles, you will need to export and import separately for each one.
