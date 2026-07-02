@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v14)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v15)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -114,15 +114,6 @@
 		if (!suppressSave) saveChannelSpeed(getChannelId(), video.playbackRate);
 	}
 
-	function onSpeedHover()
-	{
-		setTimeout(() =>
-		{
-			const tooltip = document.querySelector(".ytp-efyt-tooltip .ytp-tooltip-text");
-			if (tooltip) tooltip.textContent = `Speed (${video?.playbackRate}x)`;
-		}, 50);
-	}
-
 	function onVideoNavigation()
 	{
 		setTimeout(() =>
@@ -135,14 +126,6 @@
 				video?.removeEventListener("ratechange", onRateChange);
 				v.addEventListener("ratechange", onRateChange);
 				video = v;
-			}
-
-			// Re-bind on each navigation in case the button was recreated by EfYT
-			const speedBtn = document.getElementById("efyt-speed");
-			if (speedBtn)
-			{
-				speedBtn.removeEventListener("mouseenter", onSpeedHover);
-				speedBtn.addEventListener("mouseenter", onSpeedHover);
 			}
 
 			const id = getChannelId();
