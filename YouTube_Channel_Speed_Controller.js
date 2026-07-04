@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v15)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v16)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -7,10 +7,12 @@
 {
 	"use strict";
 
-	const APPLY_DELAY_MS = 1500;
-	const EFYT_KEY       = "enhancer-for-youtube";
-	const CH_PREFIX      = "efyt_ch_speed::";
-	const CH_SELECTORS   =
+	const SUPPRESS_RESET_MS = 500;
+	const RETRY_DELAY_MS    = 1500;
+	const MAX_RETRIES       = 3;
+	const EFYT_KEY          = "enhancer-for-youtube";
+	const CH_PREFIX         = "efyt_ch_speed::";
+	const CH_SELECTORS      =
 	[
 		"ytd-channel-name a",
 		"#channel-name a",
@@ -23,8 +25,28 @@
 		'badge-shape[aria-label="Official Artist Channel"]',
 		'[aria-label="Official Artist Channel"]',
 	];
+	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 005.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
+	const TITLE_SELECTORS =
+	[
+		"ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string",
+		"#title h1 yt-formatted-string",
+		"h1.ytd-video-primary-info-renderer",
+	];
+	const TITLE_KEYWORDS =
+	[
+		"official audio",
+		"official video",
+		"official music video",
+		"official lyric video",
+		"official visualizer",
+		"lyric video",
+		"lyrics",
+		"audio only",
+		"visualizer",
+	];
 
 	let suppressSave = false;
+	let settling     = false;
 	let video        = null;
 
 	// -----------------------------------------------------------
@@ -51,13 +73,55 @@
 		return null;
 	}
 
+	function hasArtistBadgeSvg()
+	{
+		const scope = document.querySelector("#owner, ytd-channel-name") ?? document;
+		const paths = scope.querySelectorAll("svg path");
+		for (const path of paths)
+		{
+			if (path.getAttribute("d") === ARTIST_BADGE_SVG_PATH) return true;
+		}
+		return false;
+	}
+
+	function getVideoTitle()
+	{
+		for (const sel of TITLE_SELECTORS)
+		{
+			const text = document.querySelector(sel)?.textContent?.trim();
+			if (text) return text;
+		}
+		return "";
+	}
+
+	function titleMatchesMusicKeyword(title)
+	{
+		const lower = title.toLowerCase();
+		return TITLE_KEYWORDS.some(kw => lower.includes(kw));
+	}
+
+	function getVideoCategory()
+	{
+		return document.querySelector('meta[itemprop="genre"]')?.content ?? "";
+	}
+
 	function isOfficialArtistChannel()
 	{
 		for (const sel of ARTIST_BADGE_SELECTORS)
 		{
 			if (document.querySelector(sel)) return true;
 		}
+
 		return false;
+	}
+
+	function isMusicCategory()
+	{
+		if (getVideoCategory() === "Music") return true;
+		if (isOfficialArtistChannel()) return true;
+		if (hasArtistBadgeSvg()) return true;
+
+		return titleMatchesMusicKeyword(getVideoTitle());
 	}
 
 	function loadChannelSpeed(id)
@@ -71,8 +135,11 @@
 		const def = getEfytDefaultSpeed();
 		if (Math.abs(speed - def) < 0.001)
 		{
-			localStorage.removeItem(CH_PREFIX + id);
-			console.log(`[EfYT-ChSpeed] Cleared override for ${id} (matches default ${def}x)`);
+			if (localStorage.getItem(CH_PREFIX + id) !== null)
+			{
+				localStorage.removeItem(CH_PREFIX + id);
+				console.log(`[EfYT-ChSpeed] Cleared override for ${id} (matches default ${def}x)`);
+			}
 		}
 		else
 		{
@@ -90,64 +157,150 @@
 		const v     = document.querySelector("video");
 		const plus  = document.getElementById("efyt-speed-plus");
 		const minus = document.getElementById("efyt-speed-minus");
-		if (!v || !plus || !minus || Math.abs(v.playbackRate - target) < 0.001) return;
+
+		if (!v || !plus || !minus)
+		{
+			console.warn("[EfYT-ChSpeed] stepToSpeed: video or EfYT buttons not found yet.", { v: !!v, plus: !!plus, minus: !!minus });
+			return false;
+		}
+
+		if (Math.abs(v.playbackRate - target) < 0.001) return true;
 
 		const before = v.playbackRate;
 		(target > before ? plus : minus).click();
 
 		const step = Math.abs(v.playbackRate - before);
-		if (!step) return;
+		if (!step) return false;
 
 		const after  = v.playbackRate;
 		const clicks = Math.round((target - after) / step);
 		const btn    = clicks > 0 ? plus : minus;
 		for (let i = 0; i < Math.abs(clicks); i++) btn.click();
 		console.log(`[EfYT-ChSpeed] Stepped to ${v.playbackRate}x`);
+		return true;
 	}
 
 	// -----------------------------------------------------------
-	// Main: run on every YouTube navigation
+	// Main: apply the correct speed once the current video is loaded
 	// -----------------------------------------------------------
 
 	function onRateChange()
 	{
-		if (!suppressSave) saveChannelSpeed(getChannelId(), video.playbackRate);
+		if (settling)
+		{
+			console.log("[EfYT-ChSpeed] Ignoring ratechange while settling.");
+			return;
+		}
+
+		const id = getChannelId();
+		if (!suppressSave && id) saveChannelSpeed(id, video.playbackRate);
+	}
+
+	function forceMusicSpeed(retriesLeft)
+	{
+		console.log("[EfYT-ChSpeed] Music detected — forcing 1x");
+		suppressSave = true;
+		const ok = stepToSpeed(1);
+		if (!ok && retriesLeft > 0)
+		{
+			suppressSave = false;
+			setTimeout(() => checkMusicAndForce(retriesLeft - 1), RETRY_DELAY_MS);
+			return;
+		}
+		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+	}
+
+	function checkMusicAndForce(retriesLeft)
+	{
+		if (isMusicCategory())
+		{
+			forceMusicSpeed(retriesLeft);
+			return;
+		}
+
+		if (retriesLeft > 0)
+		{
+			setTimeout(() => checkMusicAndForce(retriesLeft - 1), RETRY_DELAY_MS);
+		}
+	}
+
+	function applySavedSpeed(id, speed)
+	{
+		console.log(`[EfYT-ChSpeed] Restoring ${speed}x for ${id}`);
+		suppressSave = true;
+		const ok = stepToSpeed(speed);
+		if (!ok)
+		{
+			suppressSave = false;
+			return false;
+		}
+		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+		return true;
+	}
+
+	function checkSavedSpeedAndApply(retriesLeft)
+	{
+		const id = getChannelId();
+
+		if (id)
+		{
+			const saved = loadChannelSpeed(id);
+			if (saved) applySavedSpeed(id, saved);
+			settling = false;
+			return;
+		}
+
+		// Channel DOM (name/link) can render a beat after loadedmetadata —
+		// keep retrying until it shows up, or give up after MAX_RETRIES.
+		if (retriesLeft > 0)
+		{
+			console.log(`[EfYT-ChSpeed] Channel not detected yet — retrying in ${RETRY_DELAY_MS}ms (${retriesLeft} left)`);
+			setTimeout(() => checkSavedSpeedAndApply(retriesLeft - 1), RETRY_DELAY_MS);
+		}
+		else
+		{
+			settling = false;
+		}
+	}
+
+	function applySpeedForCurrentVideo()
+	{
+		// Block onRateChange from mistaking EfYT's own auto-applied default
+		// speed for a user action while we're still resolving the channel.
+		settling = true;
+
+		// Saved per-channel speed and music detection can each lag behind
+		// loadedmetadata independently, so they run as separate retry loops
+		// rather than blocking on each other.
+		checkSavedSpeedAndApply(MAX_RETRIES);
+		checkMusicAndForce(MAX_RETRIES);
+	}
+
+	function bindVideo(v)
+	{
+		if (v === video) return;
+
+		video?.removeEventListener("ratechange", onRateChange);
+		v.addEventListener("ratechange", onRateChange);
+		video = v;
 	}
 
 	function onVideoNavigation()
 	{
-		setTimeout(() =>
+		const v = document.querySelector("video");
+		if (!v) return;
+
+		bindVideo(v);
+
+		// readyState >= 1 (HAVE_METADATA) means loadedmetadata already fired
+		if (v.readyState >= 1)
 		{
-			const v = document.querySelector("video");
-			if (!v) return;
-
-			if (v !== video)
-			{
-				video?.removeEventListener("ratechange", onRateChange);
-				v.addEventListener("ratechange", onRateChange);
-				video = v;
-			}
-
-			const id = getChannelId();
-
-			// Official Artist Channels always get forced to 1x, ignoring any saved override
-			if (isOfficialArtistChannel())
-			{
-				console.log(`[EfYT-ChSpeed] Official Artist Channel detected for ${id ?? "(unknown)"} — forcing 1x`);
-				suppressSave = true;
-				stepToSpeed(1);
-				setTimeout(() => { suppressSave = false; }, 500);
-				return;
-			}
-
-			const saved = id && loadChannelSpeed(id);
-			if (!saved) return;
-
-			console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
-			suppressSave = true;
-			stepToSpeed(saved);
-			setTimeout(() => { suppressSave = false; }, 500);
-		}, APPLY_DELAY_MS);
+			applySpeedForCurrentVideo();
+		}
+		else
+		{
+			v.addEventListener("loadedmetadata", () => applySpeedForCurrentVideo(), { once: true });
+		}
 	}
 
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
@@ -179,6 +332,41 @@
 			const isArtist = isOfficialArtistChannel();
 			console.log("[EfYT-ChSpeed] Official Artist Channel:", isArtist);
 			return isArtist;
+		},
+
+		hasArtistBadgeSvg: () =>
+		{
+			const hasSvg = hasArtistBadgeSvg();
+			console.log("[EfYT-ChSpeed] Artist badge SVG present:", hasSvg);
+			return hasSvg;
+		},
+
+		getVideoTitle: () =>
+		{
+			const title = getVideoTitle();
+			console.log("[EfYT-ChSpeed] Video title:", title || "(not found)");
+			return title;
+		},
+
+		titleMatchesMusicKeyword: (title = getVideoTitle()) =>
+		{
+			const matches = titleMatchesMusicKeyword(title);
+			console.log(`[EfYT-ChSpeed] Title "${title}" matches keyword:`, matches);
+			return matches;
+		},
+
+		getVideoCategory: () =>
+		{
+			const category = getVideoCategory();
+			console.log("[EfYT-ChSpeed] Video category:", category || "(not found)");
+			return category;
+		},
+
+		isMusicCategory: () =>
+		{
+			const isMusic = isMusicCategory();
+			console.log("[EfYT-ChSpeed] Is music category:", isMusic);
+			return isMusic;
 		},
 
 		getDefaultSpeed: () =>
@@ -244,20 +432,44 @@
 			console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
 		},
 
-		help: () => console.log(
-			`%c[EfYT-ChSpeed] Commands:
-  efytSpeed.refresh()
-  efytSpeed.getChannelId()
-  efytSpeed.isOfficialArtistChannel()
-  efytSpeed.getDefaultSpeed()
-  efytSpeed.getSpeed([id])
-  efytSpeed.setSpeed(n [,id])
-  efytSpeed.clearSpeed([id])
-  efytSpeed.clearAll()
-  efytSpeed.export()
-  efytSpeed.import(obj|json)`,
-			"color:#fff;font-weight:bold"
-		),
+		help: () =>
+		{
+			console.log(
+				`%c[EfYT-ChSpeed] Commands:
+
+%cDetection
+%c  efytSpeed.isMusicCategory()               → true if any detection layer matches
+  efytSpeed.getVideoCategory()             → reads meta[itemprop="genre"]
+  efytSpeed.isOfficialArtistChannel()      → checks badge selectors only
+  efytSpeed.hasArtistBadgeSvg()            → checks badge SVG icon
+  efytSpeed.getVideoTitle()                → current video title
+  efytSpeed.titleMatchesMusicKeyword([t])  → test a title against keywords
+
+%cChannel speed
+%c  efytSpeed.getChannelId()                  → current channel path
+  efytSpeed.getDefaultSpeed()              → EfYT's global default speed
+  efytSpeed.getSpeed([id])                 → saved speed for a channel
+  efytSpeed.setSpeed(n [,id])              → set + save speed for a channel
+  efytSpeed.clearSpeed([id])               → remove override for a channel
+  efytSpeed.clearAll()                     → remove all saved overrides
+
+%cData
+%c  efytSpeed.export()                       → log all overrides as JSON
+  efytSpeed.import(obj|json)               → import overrides from JSON
+
+%cMisc
+%c  efytSpeed.refresh()                      → manually re-run detection now`,
+				"color:#fff;font-weight:bold",
+				"color:#8ab4f8;font-weight:bold",
+				"color:#ccc",
+				"color:#8ab4f8;font-weight:bold",
+				"color:#ccc",
+				"color:#8ab4f8;font-weight:bold",
+				"color:#ccc",
+				"color:#8ab4f8;font-weight:bold",
+				"color:#ccc"
+			);
+		},
 	};
 
 	console.log("%c[EfYT-ChSpeed] Active. %cType efytSpeed.help() for commands.", "color:#fff;font-weight:bold", "color:#aaa");
