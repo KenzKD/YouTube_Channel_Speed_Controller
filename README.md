@@ -12,7 +12,7 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 - When you change the playback speed on a channel using EfYT's speed buttons or scrolling over the speed icon, that speed is saved automatically.
 - The next time you visit a video from that channel, the saved speed is restored using EfYT's own `+` / `−` buttons — keeping EfYT's internal state fully in sync.
 - If you set the speed back to your EfYT global default (I keep mine at 2x Speed), the channel override is deleted automatically.
-- Automatically sets the speed of "Official Artist Channels" (i.e. Music Channels) to 1x.
+- Automatically sets the speed of Detected Music videos back to 1x.
 
 ---
 
