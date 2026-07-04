@@ -56,23 +56,13 @@ Run the following in the Console:
 efytSpeed.export();
 ```
 
-Your saved channels and speeds will be printed as a JSON block. Copy everything between the dashed lines, for example:
-
-```json
-{
-	"/@mkbhd": 1.5,
-	"/@veritasium": 2,
-	"/@linustechtips": 1.75
-}
-```
-
-Save this JSON to a text file in a safe location.
+Your saved channels and speeds will be exported as a JSON file.
 
 ---
 
 ### Import
 
-Run the following in the Console, replacing the example data with your own backup:
+Run the following in the Console, replacing the example data with the JSON data from your own backup:
 
 ```javascript
 efytSpeed.import({
@@ -80,12 +70,6 @@ efytSpeed.import({
 	"/@veritasium": 2,
 	"/@linustechtips": 1.75,
 });
-```
-
-Or if you have your backup saved as a JSON string:
-
-```javascript
-efytSpeed.import('{"/@mkbhd": 1.5, "/@veritasium": 2}');
 ```
 
 The console will confirm how many channels were imported:
