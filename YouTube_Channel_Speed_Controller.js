@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v16)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v17)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -407,10 +407,23 @@
 		{
 			const out  = Object.fromEntries(chKeys().map(k => [k.slice(CH_PREFIX.length), parseFloat(localStorage.getItem(k))]));
 			const json = JSON.stringify(out, null, 2);
-			console.log("%c[EfYT-ChSpeed] Copy the JSON below:", "color:#aaa;font-style:italic");
-			console.log("%c----------------------------------------", "color:#444");
-			console.log(json);
-			console.log("%c----------------------------------------", "color:#444");
+
+			const blob = new Blob([json], { type: "application/json" });
+			const url  = URL.createObjectURL(blob);
+
+			const ts       = new Date().toISOString().replace(/[:.]/g, "-");
+			const filename = `efyt-channel-speeds_${ts}.json`;
+
+			const a = document.createElement("a");
+			a.href     = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+
+			URL.revokeObjectURL(url);
+
+			console.log(`[EfYT-ChSpeed] Exported ${Object.keys(out).length} channel(s) to ${filename}`);
 			return out;
 		},
 
