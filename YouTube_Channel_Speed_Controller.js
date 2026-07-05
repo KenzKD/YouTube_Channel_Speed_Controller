@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v18)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v19)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -149,6 +149,29 @@
 	}
 
 	// -----------------------------------------------------------
+	// Generic "retry until condition holds" loop.
+	// Used for anything that has to wait on YouTube's SPA DOM to settle.
+	// -----------------------------------------------------------
+
+	function retryUntil(check, onFound, retriesLeft, onGiveUp)
+	{
+		if (check())
+		{
+			onFound();
+			return;
+		}
+
+		if (retriesLeft > 0)
+		{
+			setTimeout(() => retryUntil(check, onFound, retriesLeft - 1, onGiveUp), RETRY_DELAY_MS);
+		}
+		else
+		{
+			onGiveUp?.();
+		}
+	}
+
+	// -----------------------------------------------------------
 	// Step EfYT to target speed using its own +/- buttons
 	// -----------------------------------------------------------
 
@@ -169,6 +192,9 @@
 		const before = v.playbackRate;
 		(target > before ? plus : minus).click();
 
+		// NOTE: assumes EfYT's +/- handlers mutate video.playbackRate synchronously
+		// on click. If EfYT ever defers this (rAF, promise, debounce), `step` will
+		// read 0 and this function will return false without adjusting speed.
 		const step = Math.abs(v.playbackRate - before);
 		if (!step) return false;
 
@@ -196,71 +222,24 @@
 		if (!suppressSave && id) saveChannelSpeed(id, video.playbackRate);
 	}
 
-	function forceMusicSpeed(retriesLeft)
+	// forceMusicSpeed keeps its own internal retry — that one is for
+	// "music was detected but stepToSpeed failed because EfYT's buttons
+	// weren't in the DOM yet", which is a different wait than the
+	// "music isn't detectable yet at all" wait handled by retryUntil.
+	function forceMusicSpeed(retriesLeft = MAX_RETRIES)
 	{
 		console.log("[EfYT-ChSpeed] Music detected — forcing 1x");
 		suppressSave = true;
 		const ok = stepToSpeed(1);
+
 		if (!ok && retriesLeft > 0)
 		{
 			suppressSave = false;
-			setTimeout(() => checkMusicAndForce(retriesLeft - 1), RETRY_DELAY_MS);
+			setTimeout(() => forceMusicSpeed(retriesLeft - 1), RETRY_DELAY_MS);
 			return;
 		}
+
 		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-	}
-
-	function checkMusicAndForce(retriesLeft)
-	{
-		if (isMusicCategory())
-		{
-			forceMusicSpeed(retriesLeft);
-			return;
-		}
-
-		if (retriesLeft > 0)
-		{
-			setTimeout(() => checkMusicAndForce(retriesLeft - 1), RETRY_DELAY_MS);
-		}
-	}
-
-	function applySavedSpeed(id, speed)
-	{
-		console.log(`[EfYT-ChSpeed] Restoring ${speed}x for ${id}`);
-		suppressSave = true;
-		const ok = stepToSpeed(speed);
-		if (!ok)
-		{
-			suppressSave = false;
-			return false;
-		}
-		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-		return true;
-	}
-
-	function checkSavedSpeedAndApply(retriesLeft)
-	{
-		const id = getChannelId();
-
-		if (id)
-		{
-			const saved = loadChannelSpeed(id);
-			if (saved) applySavedSpeed(id, saved);
-			settling = false;
-			return;
-		}
-
-		// Channel DOM (name/link) can render a beat after loadedmetadata —
-		// keep retrying until it shows up, or give up after MAX_RETRIES.
-		if (retriesLeft > 0)
-		{
-			console.log(`[EfYT-ChSpeed] Channel not detected yet — retrying in ${RETRY_DELAY_MS}ms (${retriesLeft} left)`);
-			setTimeout(() => checkSavedSpeedAndApply(retriesLeft - 1), RETRY_DELAY_MS);
-		}
-		else
-		{
-			settling = false;
-		}
 	}
 
 	function applySpeedForCurrentVideo()
@@ -272,8 +251,26 @@
 		// Saved per-channel speed and music detection can each lag behind
 		// loadedmetadata independently, so they run as separate retry loops
 		// rather than blocking on each other.
-		checkSavedSpeedAndApply(MAX_RETRIES);
-		checkMusicAndForce(MAX_RETRIES);
+		retryUntil(
+			() => !!getChannelId(),
+			() =>
+			{
+				const id    = getChannelId();
+				const saved = loadChannelSpeed(id);
+				if (saved)
+				{
+					console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
+					suppressSave = true;
+					if (stepToSpeed(saved)) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+					else suppressSave = false;
+				}
+				settling = false;
+			},
+			MAX_RETRIES,
+			() => { settling = false; }
+		);
+
+		retryUntil(isMusicCategory, () => forceMusicSpeed(), MAX_RETRIES);
 	}
 
 	function bindVideo(v)
@@ -548,7 +545,7 @@
 				`%c[EfYT-ChSpeed] Commands:
 
 %cDetection
-%c  efytSpeed.isMusicCategory()               → true if any detection layer matches
+%c  efytSpeed.isMusicCategory()              → true if any detection layer matches
   efytSpeed.getVideoCategory()             → reads meta[itemprop="genre"]
   efytSpeed.isOfficialArtistChannel()      → checks badge selectors only
   efytSpeed.hasArtistBadgeSvg()            → checks badge SVG icon
@@ -556,7 +553,7 @@
   efytSpeed.titleMatchesMusicKeyword([t])  → test a title against keywords
 
 %cChannel speed
-%c  efytSpeed.getChannelId()                  → current channel path
+%c  efytSpeed.getChannelId()                 → current channel path
   efytSpeed.getDefaultSpeed()              → EfYT's global default speed
   efytSpeed.getSpeed([id])                 → saved speed for a channel
   efytSpeed.setSpeed(n [,id])              → set + save speed for a channel
@@ -565,7 +562,7 @@
 
 %cData
 %c  efytSpeed.export()                       → log all overrides as JSON
-  efytSpeed.import(obj|json)               → import overrides from JSON
+  efytSpeed.import()                       → show a button to pick a .json file to import
 
 %cMisc
 %c  efytSpeed.refresh()                      → manually re-run detection now`,
