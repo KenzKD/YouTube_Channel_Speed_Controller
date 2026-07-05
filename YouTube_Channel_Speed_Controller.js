@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v17)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v18)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -427,22 +427,119 @@
 			return out;
 		},
 
-		import: (data) =>
+		import: () =>
 		{
-			if (typeof data === "string")
+			const OVERLAY_ID = "efyt-chspeed-import-btn";
+			const OVERLAY_STYLE =
 			{
-				try   { data = JSON.parse(data); }
-				catch (_) { console.error("[EfYT-ChSpeed] Import failed — invalid JSON."); return; }
-			}
-			let count = 0;
-			for (const [id, sp] of Object.entries(data))
+				position: "fixed",
+				top: "16px",
+				right: "16px",
+				zIndex: "999999",
+				padding: "40px 56px",
+				background: "#065fd4",
+				color: "#fff",
+				border: "none",
+				borderRadius: "24px",
+				fontSize: "52px",
+				fontFamily: "sans-serif",
+				cursor: "pointer",
+				boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+			};
+
+			if (document.getElementById(OVERLAY_ID))
 			{
-				const n = parseFloat(sp);
-				if (isNaN(n) || n <= 0) continue;
-				localStorage.setItem(CH_PREFIX + id, String(n));
-				count++;
+				console.log("[EfYT-ChSpeed] Import button is already showing — click it in the top-right corner.");
+				return;
 			}
-			console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
+
+			function isJsonFile(file)
+			{
+				return file.type === "application/json" || file.name.toLowerCase().endsWith(".json");
+			}
+
+			function applyImportedData(json)
+			{
+				let parsed;
+				try
+				{
+					parsed = JSON.parse(json);
+				}
+				catch (_)
+				{
+					console.error("[EfYT-ChSpeed] Import failed — file is not valid JSON.");
+					return;
+				}
+
+				let count = 0;
+				for (const [id, sp] of Object.entries(parsed))
+				{
+					const n = parseFloat(sp);
+					if (isNaN(n) || n <= 0) continue;
+					localStorage.setItem(CH_PREFIX + id, String(n));
+					count++;
+				}
+				console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
+			}
+
+			function showImportButton()
+			{
+				const overlay = document.createElement("button");
+				overlay.id = OVERLAY_ID;
+				overlay.textContent = "📂 Click to choose EfYT speeds JSON";
+				Object.assign(overlay.style, OVERLAY_STYLE);
+
+				const input = document.createElement("input");
+				input.type = "file";
+				input.accept = ".json,application/json";
+				input.style.display = "none";
+
+				const controller = new AbortController();
+
+				setTimeout(() =>
+				{
+					if (controller.signal.aborted) return;
+					controller.abort();
+					overlay.remove();
+					input.remove();
+					console.log("[EfYT-ChSpeed] Import cancelled — button timed out.");
+				}, 8000);
+
+				input.addEventListener("change", () =>
+				{
+					controller.abort();
+					input.remove();
+
+					const file = input.files?.[0];
+					if (!file) return;
+
+					if (!isJsonFile(file))
+					{
+						console.error(`[EfYT-ChSpeed] Import failed — "${file.name}" is not a .json file. Try again.`);
+						showImportButton();
+						return;
+					}
+
+					const reader   = new FileReader();
+					reader.onload  = () => applyImportedData(reader.result);
+					reader.onerror = () => console.error("[EfYT-ChSpeed] Import failed — could not read file.");
+					reader.readAsText(file);
+				}, { signal: controller.signal });
+
+				overlay.addEventListener("click", () =>
+				{
+					controller.abort();
+					overlay.remove();
+					input.click();
+				}, { signal: controller.signal });
+
+				document.body.appendChild(overlay);
+				document.body.appendChild(input);
+
+				console.log("[EfYT-ChSpeed] Click the blue button in the top-right corner to choose a file.");
+			}
+
+			showImportButton();
 		},
 
 		help: () =>
