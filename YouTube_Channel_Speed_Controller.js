@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v19)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v20)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -491,12 +491,14 @@
 				input.accept = ".json,application/json";
 				input.style.display = "none";
 
-				const controller = new AbortController();
+				const overlayController = new AbortController();
+				const inputController   = new AbortController();
 
 				setTimeout(() =>
 				{
-					if (controller.signal.aborted) return;
-					controller.abort();
+					if (inputController.signal.aborted) return;
+					overlayController.abort();
+					inputController.abort();
 					overlay.remove();
 					input.remove();
 					console.log("[EfYT-ChSpeed] Import cancelled — button timed out.");
@@ -504,7 +506,7 @@
 
 				input.addEventListener("change", () =>
 				{
-					controller.abort();
+					inputController.abort();
 					input.remove();
 
 					const file = input.files?.[0];
@@ -512,8 +514,7 @@
 
 					if (!isJsonFile(file))
 					{
-						console.error(`[EfYT-ChSpeed] Import failed — "${file.name}" is not a .json file. Try again.`);
-						showImportButton();
+						console.error(`[EfYT-ChSpeed] Import failed — "${file.name}" is not a .json file.`);
 						return;
 					}
 
@@ -521,14 +522,14 @@
 					reader.onload  = () => applyImportedData(reader.result);
 					reader.onerror = () => console.error("[EfYT-ChSpeed] Import failed — could not read file.");
 					reader.readAsText(file);
-				}, { signal: controller.signal });
+				}, { signal: inputController.signal });
 
 				overlay.addEventListener("click", () =>
 				{
-					controller.abort();
+					overlayController.abort();
 					overlay.remove();
 					input.click();
-				}, { signal: controller.signal });
+				}, { signal: overlayController.signal });
 
 				document.body.appendChild(overlay);
 				document.body.appendChild(input);
