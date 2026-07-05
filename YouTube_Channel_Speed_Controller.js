@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v20)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v21)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -10,6 +10,8 @@
 	const SUPPRESS_RESET_MS = 500;
 	const RETRY_DELAY_MS    = 1500;
 	const MAX_RETRIES       = 3;
+	const SETTLE_POLL_MS    = 200;
+	const SETTLE_MAX_POLLS  = 15;
 	const EFYT_KEY          = "enhancer-for-youtube";
 	const CH_PREFIX         = "efyt_ch_speed::";
 	const CH_SELECTORS      =
@@ -48,6 +50,9 @@
 	let suppressSave = false;
 	let settling     = false;
 	let video        = null;
+	let lastVideoId   = null;
+	let lastChannelId = null;
+	let navToken      = 0;
 
 	// -----------------------------------------------------------
 	// Helpers
@@ -55,8 +60,20 @@
 
 	function getEfytDefaultSpeed()
 	{
-		try   { return JSON.parse(localStorage.getItem(EFYT_KEY))?.speed || 1; }
-		catch { return 1; }
+		try
+		{
+			return JSON.parse(localStorage.getItem(EFYT_KEY))?.speed || 1;
+		}
+		catch
+		{
+			return 1;
+		}
+	}
+
+	function getWatchVideoId()
+	{
+		return document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
+			?? new URLSearchParams(location.search).get("v");
 	}
 
 	function getChannelId()
@@ -100,11 +117,6 @@
 		return TITLE_KEYWORDS.some(kw => lower.includes(kw));
 	}
 
-	function getVideoCategory()
-	{
-		return document.querySelector('meta[itemprop="genre"]')?.content ?? "";
-	}
-
 	function isOfficialArtistChannel()
 	{
 		for (const sel of ARTIST_BADGE_SELECTORS)
@@ -115,9 +127,18 @@
 		return false;
 	}
 
+	// NOTE: meta[itemprop="genre"] was removed from detection entirely.
+	// It's set once by YouTube's server-rendered page for SEO/schema.org
+	// purposes and does NOT get updated on SPA (yt-navigate-finish)
+	// transitions — it stays frozen at whatever the first video in the
+	// tab's session was, forever. Debug logs confirmed this: it reported
+	// "Music" for a completely unrelated tech video because the FIRST
+	// video played that session happened to be music. Using it caused
+	// permanent false positives for the rest of the session, not a
+	// timing race. Detection now relies only on the artist badge and
+	// title keywords, both of which update correctly on navigation.
 	function isMusicCategory()
 	{
-		if (getVideoCategory() === "Music") return true;
 		if (isOfficialArtistChannel()) return true;
 		if (hasArtistBadgeSvg()) return true;
 
@@ -150,7 +171,6 @@
 
 	// -----------------------------------------------------------
 	// Generic "retry until condition holds" loop.
-	// Used for anything that has to wait on YouTube's SPA DOM to settle.
 	// -----------------------------------------------------------
 
 	function retryUntil(check, onFound, retriesLeft, onGiveUp)
@@ -169,6 +189,42 @@
 		{
 			onGiveUp?.();
 		}
+	}
+
+	// -----------------------------------------------------------
+	// Wait for video-id to change to something new, then wait one more
+	// short beat for title/badge (which update alongside it, per the
+	// debug logs) to catch up before running any detection.
+	// -----------------------------------------------------------
+
+	function waitForNewVideoId(token, onFound, onGiveUp)
+	{
+		let pollsLeft = SETTLE_MAX_POLLS;
+
+		function poll()
+		{
+			if (token !== navToken) return;
+
+			const id = getWatchVideoId();
+
+			if (id && id !== lastVideoId)
+			{
+				lastVideoId = id;
+				onFound(id);
+				return;
+			}
+
+			if (pollsLeft-- > 0)
+			{
+				setTimeout(poll, SETTLE_POLL_MS);
+			}
+			else
+			{
+				onGiveUp?.();
+			}
+		}
+
+		poll();
 	}
 
 	// -----------------------------------------------------------
@@ -192,9 +248,6 @@
 		const before = v.playbackRate;
 		(target > before ? plus : minus).click();
 
-		// NOTE: assumes EfYT's +/- handlers mutate video.playbackRate synchronously
-		// on click. If EfYT ever defers this (rAF, promise, debounce), `step` will
-		// read 0 and this function will return false without adjusting speed.
 		const step = Math.abs(v.playbackRate - before);
 		if (!step) return false;
 
@@ -207,7 +260,7 @@
 	}
 
 	// -----------------------------------------------------------
-	// Main: apply the correct speed once the current video is loaded
+	// Main
 	// -----------------------------------------------------------
 
 	function onRateChange()
@@ -222,10 +275,6 @@
 		if (!suppressSave && id) saveChannelSpeed(id, video.playbackRate);
 	}
 
-	// forceMusicSpeed keeps its own internal retry — that one is for
-	// "music was detected but stepToSpeed failed because EfYT's buttons
-	// weren't in the DOM yet", which is a different wait than the
-	// "music isn't detectable yet at all" wait handled by retryUntil.
 	function forceMusicSpeed(retriesLeft = MAX_RETRIES)
 	{
 		console.log("[EfYT-ChSpeed] Music detected — forcing 1x");
@@ -242,20 +291,28 @@
 		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
 	}
 
-	function applySpeedForCurrentVideo()
+	function applySpeedForCurrentVideo(token)
 	{
-		// Block onRateChange from mistaking EfYT's own auto-applied default
-		// speed for a user action while we're still resolving the channel.
 		settling = true;
 
-		// Saved per-channel speed and music detection can each lag behind
-		// loadedmetadata independently, so they run as separate retry loops
-		// rather than blocking on each other.
-		retryUntil(
-			() => !!getChannelId(),
+		retryUntil
+		(
 			() =>
 			{
-				const id    = getChannelId();
+				const id = getChannelId();
+				return !!id && id !== lastChannelId;
+			},
+			() =>
+			{
+				if (token !== navToken)
+				{
+					settling = false;
+					return;
+				}
+
+				const id = getChannelId();
+				lastChannelId = id;
+
 				const saved = loadChannelSpeed(id);
 				if (saved)
 				{
@@ -264,13 +321,53 @@
 					if (stepToSpeed(saved)) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
 					else suppressSave = false;
 				}
+				else
+				{
+					console.log(`[EfYT-ChSpeed] No saved speed for ${id}`);
+					suppressSave = true;
+					if (stepToSpeed(getEfytDefaultSpeed())) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+					else suppressSave = false;
+				}
 				settling = false;
 			},
 			MAX_RETRIES,
-			() => { settling = false; }
+			() =>
+			{
+				// Channel id never changed (e.g. two consecutive videos on the
+				// SAME channel) — that's a legitimate case, not staleness, so
+				// fall back to whatever getChannelId() currently reports.
+				const id = getChannelId();
+				if (id)
+				{
+					lastChannelId = id;
+					const saved = loadChannelSpeed(id);
+					if (saved)
+					{
+						suppressSave = true;
+						if (stepToSpeed(saved)) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+						else suppressSave = false;
+					}
+					else
+					{
+						console.log(`[EfYT-ChSpeed] No saved speed for ${id}`);
+						suppressSave = true;
+						if (stepToSpeed(getEfytDefaultSpeed())) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+						else suppressSave = false;
+					}
+				}
+				settling = false;
+			}
 		);
 
-		retryUntil(isMusicCategory, () => forceMusicSpeed(), MAX_RETRIES);
+		retryUntil
+		(
+			isMusicCategory,
+			() =>
+			{
+				if (token === navToken) forceMusicSpeed();
+			},
+			MAX_RETRIES
+		);
 	}
 
 	function bindVideo(v)
@@ -289,15 +386,34 @@
 
 		bindVideo(v);
 
-		// readyState >= 1 (HAVE_METADATA) means loadedmetadata already fired
-		if (v.readyState >= 1)
-		{
-			applySpeedForCurrentVideo();
-		}
-		else
-		{
-			v.addEventListener("loadedmetadata", () => applySpeedForCurrentVideo(), { once: true });
-		}
+		const myToken = ++navToken;
+
+		// settling = true for the whole wait, so EfYT's own auto-applied
+		// default speed (which fires a ratechange as soon as the new
+		// video loads) can't be misread as a user action and delete a
+		// real saved override.
+		settling = true;
+
+		waitForNewVideoId
+		(
+			myToken,
+			() =>
+			{
+				if (v.readyState >= 1)
+				{
+					applySpeedForCurrentVideo(myToken);
+				}
+				else
+				{
+					v.addEventListener("loadedmetadata", () => applySpeedForCurrentVideo(myToken), { once: true });
+				}
+			},
+			() =>
+			{
+				console.warn("[EfYT-ChSpeed] Gave up waiting for video-id to change.");
+				settling = false;
+			}
+		);
 	}
 
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
@@ -306,7 +422,6 @@
 	// Public API — all internals exposed on window.efytSpeed
 	// -----------------------------------------------------------
 
-	// Returns all localStorage keys belonging to this script
 	const chKeys = () => Object.keys(localStorage).filter(k => k.startsWith(CH_PREFIX));
 
 	window.efytSpeed =
@@ -314,7 +429,16 @@
 		refresh: () =>
 		{
 			console.log("[EfYT-ChSpeed] Manual refresh.");
+			lastVideoId = null;
+			lastChannelId = null;
 			onVideoNavigation();
+		},
+
+		getWatchVideoId: () =>
+		{
+			const id = getWatchVideoId();
+			console.log("[EfYT-ChSpeed] Watch video ID:", id ?? "(not found)");
+			return id;
 		},
 
 		getChannelId: () =>
@@ -352,13 +476,6 @@
 			return matches;
 		},
 
-		getVideoCategory: () =>
-		{
-			const category = getVideoCategory();
-			console.log("[EfYT-ChSpeed] Video category:", category || "(not found)");
-			return category;
-		},
-
 		isMusicCategory: () =>
 		{
 			const isMusic = isMusicCategory();
@@ -382,17 +499,26 @@
 
 		setSpeed: (speed, id = getChannelId()) =>
 		{
-			if (!id) { console.warn("[EfYT-ChSpeed] No channel detected."); return; }
+			if (!id)
+			{
+				console.warn("[EfYT-ChSpeed] No channel detected.");
+				return;
+			}
 			saveChannelSpeed(id, speed);
 			stepToSpeed(speed);
 		},
 
 		clearSpeed: (id = getChannelId()) =>
 		{
-			if (!id) { console.warn("[EfYT-ChSpeed] No channel detected."); return; }
+			if (!id)
+			{
+				console.warn("[EfYT-ChSpeed] No channel detected.");
+				return;
+			}
 			localStorage.removeItem(CH_PREFIX + id);
 			console.log(`[EfYT-ChSpeed] Cleared speed for ${id}.`);
 		},
+
 		clearAll: () =>
 		{
 			const keys = chKeys();
@@ -494,42 +620,56 @@
 				const overlayController = new AbortController();
 				const inputController   = new AbortController();
 
-				setTimeout(() =>
-				{
-					if (inputController.signal.aborted) return;
-					overlayController.abort();
-					inputController.abort();
-					overlay.remove();
-					input.remove();
-					console.log("[EfYT-ChSpeed] Import cancelled — button timed out.");
-				}, 8000);
-
-				input.addEventListener("change", () =>
-				{
-					inputController.abort();
-					input.remove();
-
-					const file = input.files?.[0];
-					if (!file) return;
-
-					if (!isJsonFile(file))
+				setTimeout
+				(
+					() =>
 					{
-						console.error(`[EfYT-ChSpeed] Import failed — "${file.name}" is not a .json file.`);
-						return;
-					}
+						if (inputController.signal.aborted) return;
+						overlayController.abort();
+						inputController.abort();
+						overlay.remove();
+						input.remove();
+						console.log("[EfYT-ChSpeed] Import cancelled — button timed out.");
+					},
+					8000
+				);
 
-					const reader   = new FileReader();
-					reader.onload  = () => applyImportedData(reader.result);
-					reader.onerror = () => console.error("[EfYT-ChSpeed] Import failed — could not read file.");
-					reader.readAsText(file);
-				}, { signal: inputController.signal });
+				input.addEventListener
+				(
+					"change",
+					() =>
+					{
+						inputController.abort();
+						input.remove();
 
-				overlay.addEventListener("click", () =>
-				{
-					overlayController.abort();
-					overlay.remove();
-					input.click();
-				}, { signal: overlayController.signal });
+						const file = input.files?.[0];
+						if (!file) return;
+
+						if (!isJsonFile(file))
+						{
+							console.error(`[EfYT-ChSpeed] Import failed — "${file.name}" is not a .json file.`);
+							return;
+						}
+
+						const reader   = new FileReader();
+						reader.onload  = () => applyImportedData(reader.result);
+						reader.onerror = () => console.error("[EfYT-ChSpeed] Import failed — could not read file.");
+						reader.readAsText(file);
+					},
+					{ signal: inputController.signal }
+				);
+
+				overlay.addEventListener
+				(
+					"click",
+					() =>
+					{
+						overlayController.abort();
+						overlay.remove();
+						input.click();
+					},
+					{ signal: overlayController.signal }
+				);
 
 				document.body.appendChild(overlay);
 				document.body.appendChild(input);
@@ -542,16 +682,19 @@
 
 		help: () =>
 		{
-			console.log(
+			console.log
+			(
 				`%c[EfYT-ChSpeed] Commands:
 
 %cDetection
 %c  efytSpeed.isMusicCategory()              → true if any detection layer matches
-  efytSpeed.getVideoCategory()             → reads meta[itemprop="genre"]
   efytSpeed.isOfficialArtistChannel()      → checks badge selectors only
   efytSpeed.hasArtistBadgeSvg()            → checks badge SVG icon
   efytSpeed.getVideoTitle()                → current video title
   efytSpeed.titleMatchesMusicKeyword([t])  → test a title against keywords
+
+%cNavigation
+%c  efytSpeed.getWatchVideoId()              → ytd-watch-flexy's current video-id
 
 %cChannel speed
 %c  efytSpeed.getChannelId()                 → current channel path
@@ -568,6 +711,8 @@
 %cMisc
 %c  efytSpeed.refresh()                      → manually re-run detection now`,
 				"color:#fff;font-weight:bold",
+				"color:#8ab4f8;font-weight:bold",
+				"color:#ccc",
 				"color:#8ab4f8;font-weight:bold",
 				"color:#ccc",
 				"color:#8ab4f8;font-weight:bold",
