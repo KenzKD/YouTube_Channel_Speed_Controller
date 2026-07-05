@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v22)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v23)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -62,7 +62,8 @@
 	{
 		try
 		{
-			return JSON.parse(localStorage.getItem(EFYT_KEY))?.speed || 1;
+			const speed = JSON.parse(localStorage.getItem(EFYT_KEY))?.speed;
+			return speed > 0 ? speed : 1;
 		}
 		catch
 		{
@@ -127,16 +128,10 @@
 		return false;
 	}
 
-	// NOTE: meta[itemprop="genre"] was removed from detection entirely.
-	// It's set once by YouTube's server-rendered page for SEO/schema.org
-	// purposes and does NOT get updated on SPA (yt-navigate-finish)
-	// transitions — it stays frozen at whatever the first video in the
-	// tab's session was, forever. Debug logs confirmed this: it reported
-	// "Music" for a completely unrelated tech video because the FIRST
-	// video played that session happened to be music. Using it caused
-	// permanent false positives for the rest of the session, not a
-	// timing race. Detection now relies only on the artist badge and
-	// title keywords, both of which update correctly on navigation.
+	// meta[itemprop="genre"] is not used here — it doesn't update on
+	// SPA navigation, so it can get stuck reporting the first video's
+	// genre for the whole session. Only the artist badge and title
+	// keywords are used, since those stay accurate after navigating.
 	function isMusicCategory()
 	{
 		if (isOfficialArtistChannel()) return true;
@@ -192,9 +187,8 @@
 	}
 
 	// -----------------------------------------------------------
-	// Wait for video-id to change to something new, then wait one more
-	// short beat for title/badge (which update alongside it, per the
-	// debug logs) to catch up before running any detection.
+	// Wait for a new video-id, then give title/badge a short beat
+	// to catch up before running detection.
 	// -----------------------------------------------------------
 
 	function waitForNewVideoId(token, onFound, onGiveUp)
@@ -243,20 +237,24 @@
 			return false;
 		}
 
-		if (Math.abs(v.playbackRate - target) < 0.001) return true;
+		const MAX_CLICKS = 30; // safety cap
+		let guard = 0;
 
-		const before = v.playbackRate;
-		(target > before ? plus : minus).click();
+		while (Math.abs(v.playbackRate - target) > 0.001 && guard++ < MAX_CLICKS)
+		{
+			const before = v.playbackRate;
+			(target > before ? plus : minus).click();
 
-		const step = Math.abs(v.playbackRate - before);
-		if (!step) return false;
+			if (v.playbackRate === before)
+			{
+				// Stuck at a boundary — can't get any closer.
+				console.warn(`[EfYT-ChSpeed] stepToSpeed: stuck at ${before}x, target ${target}x unreachable.`);
+				return false;
+			}
+		}
 
-		const after  = v.playbackRate;
-		const clicks = Math.round((target - after) / step);
-		const btn    = clicks > 0 ? plus : minus;
-		for (let i = 0; i < Math.abs(clicks); i++) btn.click();
 		console.log(`[EfYT-ChSpeed] Stepped to ${v.playbackRate}x`);
-		return true;
+		return Math.abs(v.playbackRate - target) < 0.001;
 	}
 
 	function applySpeedWithSuppress(target)
@@ -299,7 +297,7 @@
 			return;
 		}
 
-		const id = getChannelId();
+		const id = lastChannelId ?? getChannelId();
 		if (!suppressSave && id) saveChannelSpeed(id, video.playbackRate);
 	}
 
@@ -316,6 +314,11 @@
 			return;
 		}
 
+		if (!ok)
+		{
+			console.warn("[EfYT-ChSpeed] forceMusicSpeed: gave up forcing 1x after max retries.");
+		}
+
 		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
 	}
 
@@ -330,35 +333,28 @@
 				const id = getChannelId();
 				return !!id && id !== lastChannelId;
 			},
-			() =>
-			{
-				if (token !== navToken)
-				{
-					settling = false;
-					return;
-				}
-
-				const id = getChannelId();
-				lastChannelId = id;
-				restoreOrDefaultSpeed(id);
-				settling = false;
-			},
+			() => finishChannelStep(token),
 			MAX_RETRIES,
-			() =>
-			{
-				// Channel id never changed (e.g. two consecutive videos on the
-				// SAME channel) — that's a legitimate case, not staleness, so
-				// fall back to whatever getChannelId() currently reports.
-				const id = getChannelId();
-				if (id)
-				{
-					lastChannelId = id;
-					restoreOrDefaultSpeed(id);
-				}
-				settling = false;
-			}
+			() => finishChannelStep(token)
 		);
+	}
 
+	function finishChannelStep(token)
+	{
+		if (token !== navToken)
+		{
+			settling = false;
+			return;
+		}
+
+		const id = getChannelId();
+		if (id)
+		{
+			lastChannelId = id;
+			restoreOrDefaultSpeed(id);
+		}
+
+		// Runs after the channel speed is applied, so music always wins last.
 		retryUntil
 		(
 			isMusicCategory,
@@ -366,8 +362,11 @@
 			{
 				if (token === navToken) forceMusicSpeed();
 			},
-			MAX_RETRIES
+			MAX_RETRIES,
+			() => { settling = false; }
 		);
+
+		settling = false;
 	}
 
 	function bindVideo(v)
@@ -407,10 +406,6 @@
 			}
 		}
 
-		// Fast path: yt-page-data-updated reliably reflects the new video's
-		// DOM state (video-id, channel, title) by the time it fires — no
-		// polling needed. But it doesn't fire for every navigation (seen in
-		// testing), so it's a fast path, not the only path.
 		function onPageDataUpdated()
 		{
 			const id = getWatchVideoId();
@@ -424,8 +419,6 @@
 
 		window.addEventListener("yt-page-data-updated", onPageDataUpdated);
 
-		// Fallback: if yt-page-data-updated doesn't fire (or fires before we
-		// got here), fall back to polling video-id the way we already did.
 		waitForNewVideoId
 		(
 			myToken,
@@ -437,6 +430,11 @@
 			() =>
 			{
 				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
+
+				// Skip if the fast path already resolved this navigation,
+				// so a stale timeout can't clobber an in-progress restore.
+				if (resolved) return;
+
 				console.warn("[EfYT-ChSpeed] Gave up waiting for video-id to change.");
 				settling = false;
 			}
