@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v21)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v22)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -259,6 +259,34 @@
 		return true;
 	}
 
+	function applySpeedWithSuppress(target)
+	{
+		suppressSave = true;
+		if (stepToSpeed(target))
+		{
+			setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
+		}
+		else
+		{
+			suppressSave = false;
+		}
+	}
+
+	function restoreOrDefaultSpeed(id)
+	{
+		const saved = loadChannelSpeed(id);
+		if (saved)
+		{
+			console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
+			applySpeedWithSuppress(saved);
+		}
+		else
+		{
+			console.log(`[EfYT-ChSpeed] No saved speed for ${id}`);
+			applySpeedWithSuppress(getEfytDefaultSpeed());
+		}
+	}
+
 	// -----------------------------------------------------------
 	// Main
 	// -----------------------------------------------------------
@@ -312,22 +340,7 @@
 
 				const id = getChannelId();
 				lastChannelId = id;
-
-				const saved = loadChannelSpeed(id);
-				if (saved)
-				{
-					console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
-					suppressSave = true;
-					if (stepToSpeed(saved)) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-					else suppressSave = false;
-				}
-				else
-				{
-					console.log(`[EfYT-ChSpeed] No saved speed for ${id}`);
-					suppressSave = true;
-					if (stepToSpeed(getEfytDefaultSpeed())) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-					else suppressSave = false;
-				}
+				restoreOrDefaultSpeed(id);
 				settling = false;
 			},
 			MAX_RETRIES,
@@ -340,20 +353,7 @@
 				if (id)
 				{
 					lastChannelId = id;
-					const saved = loadChannelSpeed(id);
-					if (saved)
-					{
-						suppressSave = true;
-						if (stepToSpeed(saved)) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-						else suppressSave = false;
-					}
-					else
-					{
-						console.log(`[EfYT-ChSpeed] No saved speed for ${id}`);
-						suppressSave = true;
-						if (stepToSpeed(getEfytDefaultSpeed())) setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-						else suppressSave = false;
-					}
+					restoreOrDefaultSpeed(id);
 				}
 				settling = false;
 			}
@@ -388,28 +388,55 @@
 
 		const myToken = ++navToken;
 
-		// settling = true for the whole wait, so EfYT's own auto-applied
-		// default speed (which fires a ratechange as soon as the new
-		// video loads) can't be misread as a user action and delete a
-		// real saved override.
 		settling = true;
 
+		let resolved = false;
+
+		function proceed()
+		{
+			if (resolved || myToken !== navToken) return;
+			resolved = true;
+
+			if (v.readyState >= 1)
+			{
+				applySpeedForCurrentVideo(myToken);
+			}
+			else
+			{
+				v.addEventListener("loadedmetadata", () => applySpeedForCurrentVideo(myToken), { once: true });
+			}
+		}
+
+		// Fast path: yt-page-data-updated reliably reflects the new video's
+		// DOM state (video-id, channel, title) by the time it fires — no
+		// polling needed. But it doesn't fire for every navigation (seen in
+		// testing), so it's a fast path, not the only path.
+		function onPageDataUpdated()
+		{
+			const id = getWatchVideoId();
+			if (id && id !== lastVideoId)
+			{
+				lastVideoId = id;
+				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
+				proceed();
+			}
+		}
+
+		window.addEventListener("yt-page-data-updated", onPageDataUpdated);
+
+		// Fallback: if yt-page-data-updated doesn't fire (or fires before we
+		// got here), fall back to polling video-id the way we already did.
 		waitForNewVideoId
 		(
 			myToken,
 			() =>
 			{
-				if (v.readyState >= 1)
-				{
-					applySpeedForCurrentVideo(myToken);
-				}
-				else
-				{
-					v.addEventListener("loadedmetadata", () => applySpeedForCurrentVideo(myToken), { once: true });
-				}
+				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
+				proceed();
 			},
 			() =>
 			{
+				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
 				console.warn("[EfYT-ChSpeed] Gave up waiting for video-id to change.");
 				settling = false;
 			}
