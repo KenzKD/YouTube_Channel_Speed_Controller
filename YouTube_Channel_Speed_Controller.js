@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v34)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v35)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -93,27 +93,24 @@
 			?? "Unknown Channel";
 	}
 
+	function textIncludesNormalized(sourceText, targetText)
+	{
+		if (!sourceText || !targetText) return false;
+		const normalize = str => str.toLowerCase().replace(/\s+/g, " ").trim();
+		return normalize(sourceText).includes(normalize(targetText));
+	}
+
+	function containerMatchesChannel(element, expectedChannelName)
+	{
+		if (!expectedChannelName) return true;
+		const container = element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
+		return container ? textIncludesNormalized(container.textContent, expectedChannelName) : true;
+	}
+
 	function hasArtistBadgeSvg(expectedChannelName)
 	{
 		const svgPath = document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`);
-		if (!svgPath) return false;
-
-		// Verify the found badge belongs to the current channel element, not a previous one
-		if (expectedChannelName)
-		{
-			const ownerContainer = svgPath.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
-			if (ownerContainer)
-			{
-				const text = ownerContainer.textContent?.trim() || "";
-				const cleanExpected = expectedChannelName.toLowerCase().replace(/\s+/g, " ").trim();
-				const cleanText = text.toLowerCase().replace(/\s+/g, " ").trim();
-				if (!cleanText.includes(cleanExpected))
-				{
-					return false;
-				}
-			}
-		}
-		return true;
+		return svgPath ? containerMatchesChannel(svgPath, expectedChannelName) : false;
 	}
 
 	function getVideoTitle()
@@ -129,24 +126,7 @@
 	function isOfficialArtistChannel(expectedChannelName)
 	{
 		const badge = document.querySelector(BADGE_SELECTOR_COMBINED);
-		if (!badge) return false;
-
-		// Verify the found badge belongs to the current channel element, not a previous one
-		if (expectedChannelName)
-		{
-			const ownerContainer = badge.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
-			if (ownerContainer)
-			{
-				const text = ownerContainer.textContent?.trim() || "";
-				const cleanExpected = expectedChannelName.toLowerCase().replace(/\s+/g, " ").trim();
-				const cleanText = text.toLowerCase().replace(/\s+/g, " ").trim();
-				if (!cleanText.includes(cleanExpected))
-				{
-					return false;
-				}
-			}
-		}
-		return true;
+		return badge ? containerMatchesChannel(badge, expectedChannelName) : false;
 	}
 
 	function isMusicCategory(pr)
@@ -167,13 +147,7 @@
 	{
 		if (!expectedChannelName) return false;
 		const ownerEl = document.querySelector("#owner, ytd-channel-name");
-		if (!ownerEl) return false;
-
-		const text = ownerEl.textContent?.trim() || "";
-		const cleanExpected = expectedChannelName.toLowerCase().replace(/\s+/g, " ").trim();
-		const cleanText = text.toLowerCase().replace(/\s+/g, " ").trim();
-
-		return cleanText.includes(cleanExpected);
+		return ownerEl ? textIncludesNormalized(ownerEl.textContent, expectedChannelName) : false;
 	}
 
 	function isAdPlaying()
@@ -183,8 +157,7 @@
 
 	async function checkMixIsMusic(videoId)
 	{
-		if (!videoId) return null;
-		if (!window.ytcfg?.get) return null;
+		if (!videoId || !window.ytcfg?.get) return null;
 
 		const apiKey  = window.ytcfg.get("INNERTUBE_API_KEY");
 		const context = window.ytcfg.get("INNERTUBE_CONTEXT");
@@ -201,7 +174,6 @@
 			"&prettyPrint=false" +
 			"&key=" + apiKey;
 
-		// Cancel any outstanding fetch request from a previous navigation cycle
 		if (mixAbortController)
 		{
 			mixAbortController.abort();
@@ -422,18 +394,10 @@
 			{
 				lastChannelId   = channelId;
 				lastChannelName = channelName;
-				const saved = loadChannelSpeed(channelId);
-				if (saved)
-				{
-					console.log(`[EfYT-ChSpeed] Applying speed ${saved}x for ${channelName}`);
-					applySpeedWithSuppress(saved);
-				}
-				else
-				{
-					const def = getEfytDefaultSpeed();
-					console.log(`[EfYT-ChSpeed] Applying default ${def}x for ${channelName}`);
-					applySpeedWithSuppress(def);
-				}
+				const speed     = loadChannelSpeed(channelId) ?? getEfytDefaultSpeed();
+				
+				console.log(`[EfYT-ChSpeed] Applying speed ${speed}x for ${channelName}`);
+				applySpeedWithSuppress(speed);
 				speedApplied = true;
 			}
 		}
