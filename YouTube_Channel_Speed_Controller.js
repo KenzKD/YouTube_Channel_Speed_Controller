@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v24)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v25)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -8,11 +8,13 @@
 	"use strict";
 
 	const SUPPRESS_RESET_MS = 500;
-	const RETRY_DELAY_MS    = 1500;
+	const RETRY_DELAY_MS = 1500;
+	const MIX_CHECK_TIMEOUT_MS = 4000;
 	const MAX_RETRIES       = 3;
 	const SETTLE_POLL_MS    = 200;
 	const SETTLE_MAX_POLLS  = 15;
-	const EFYT_KEY          = "enhancer-for-youtube";
+	const EFYT_KEY = "enhancer-for-youtube";
+	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
 	const CH_SELECTORS      =
 	[
@@ -39,7 +41,8 @@
 		// Official music releases
 		"official audio",
 		"official video",
-		"official music video",
+		"music video",
+		"mv",
 		"official lyric video",
 		"official visualizer",
 		"lyric video",
@@ -55,7 +58,6 @@
 		"choreo",
 
 		// Covers, remixes, mashups
-		"cover",
 		"acoustic cover",
 		"remix",
 		"mashup",
@@ -89,6 +91,10 @@
 		// Full releases
 		"full album",
 		"album stream",
+		
+		// SFX
+		"sfx",
+		"sound effect"
 	];
 
 	let suppressSave = false;
@@ -182,6 +188,90 @@
 		if (hasArtistBadgeSvg()) return true;
 
 		return titleMatchesMusicKeyword(getVideoTitle());
+	}
+
+	async function checkMixIsMusic(videoId)
+	{
+		if (!videoId)
+		{
+			console.log("[EfYT-ChSpeed] Mix check: no video ID.");
+			return null;
+		}
+
+		if (!window.ytcfg)
+		{
+			console.log("[EfYT-ChSpeed] Mix check: ytcfg not available.");
+			return null;
+		}
+
+		const apiKey  = window.ytcfg.get("INNERTUBE_API_KEY");
+		const context = window.ytcfg.get("INNERTUBE_CONTEXT");
+
+		if (!apiKey || !context)
+		{
+			console.log("[EfYT-ChSpeed] Mix check: could not read Innertube API key/context.");
+			return null;
+		}
+
+		const fields =
+			"contents.twoColumnWatchNextResults.playlist.playlist.contents." +
+			"playlistPanelVideoRenderer.navigationEndpoint.watchEndpoint.playerParams";
+
+		const endpoint =
+			"https://www.youtube.com/youtubei/v1/next" +
+			"?fields=" + encodeURIComponent(fields) +
+			"&prettyPrint=false" +
+			"&key=" + apiKey;
+
+		const controller = new AbortController();
+		const timeoutId  = setTimeout(() => controller.abort(), MIX_CHECK_TIMEOUT_MS);
+
+		try
+		{
+			const response = await fetch
+			(
+				endpoint,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ context, videoId, playlistId: "RD" + videoId }),
+					signal: controller.signal,
+				}
+			);
+
+			const json     = await response.json();
+			const contents = json?.contents?.twoColumnWatchNextResults?.playlist?.playlist?.contents ?? [];
+
+			const playerParams = contents
+				.map(item => item?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams)
+				.find(params => typeof params === "string");
+
+			if (!playerParams)
+			{
+				console.log("[EfYT-ChSpeed] Mix check: no playerParams found (likely no Mix for this video).");
+				return false;
+			}
+
+			const isMusic = playerParams.startsWith(PLAYER_PARAMS_MUSIC_PREFIX);
+			console.log(`[EfYT-ChSpeed] Mix check playerParams: ${playerParams} — Classified as Music: ${isMusic}`);
+			return isMusic;
+		}
+		catch (error)
+		{
+			if (error?.name === "AbortError")
+			{
+				console.log(`[EfYT-ChSpeed] Mix check: timed out after ${MIX_CHECK_TIMEOUT_MS}ms.`);
+			}
+			else
+			{
+				console.log("[EfYT-ChSpeed] Mix check request failed:", error);
+			}
+			return null;
+		}
+		finally
+		{
+			clearTimeout(timeoutId);
+		}
 	}
 
 	function loadChannelSpeed(id)
@@ -399,6 +489,7 @@
 		}
 
 		// Runs after the channel speed is applied, so music always wins last.
+		// Runs after the channel speed is applied, so music always wins last.
 		retryUntil
 		(
 			isMusicCategory,
@@ -407,7 +498,18 @@
 				if (token === navToken) forceMusicSpeed();
 			},
 			MAX_RETRIES,
-			() => { settling = false; }
+			() =>
+			{
+				settling = false;
+
+				// Sync checks (badge/title) found nothing — ask the Mix API
+				// as a last resort before giving up on this video.
+				checkMixIsMusic(getWatchVideoId()).then(isMusic =>
+				{
+					if (token !== navToken) return;
+					if (isMusic) forceMusicSpeed();
+				});
+			}
 		);
 
 		settling = false;
@@ -543,6 +645,15 @@
 			const matches = titleMatchesMusicKeyword(title);
 			console.log(`[EfYT-ChSpeed] Title "${title}" matches keyword:`, matches);
 			return matches;
+		},
+
+		checkMixIsMusic: (videoId = getWatchVideoId()) =>
+		{
+			return checkMixIsMusic(videoId).then(isMusic =>
+			{
+				console.log("[EfYT-ChSpeed] Mix check result:", isMusic);
+				return isMusic;
+			});
 		},
 
 		isMusicCategory: () =>
@@ -761,6 +872,7 @@
   efytSpeed.hasArtistBadgeSvg()            → checks badge SVG icon
   efytSpeed.getVideoTitle()                → current video title
   efytSpeed.titleMatchesMusicKeyword([t])  → test a title against keywords
+  efytSpeed.checkMixIsMusic([id])          → async Mix-API fallback check
 
 %cNavigation
 %c  efytSpeed.getWatchVideoId()              → ytd-watch-flexy's current video-id
