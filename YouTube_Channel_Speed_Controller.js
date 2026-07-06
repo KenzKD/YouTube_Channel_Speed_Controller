@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v33)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v34)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -93,9 +93,27 @@
 			?? "Unknown Channel";
 	}
 
-	function hasArtistBadgeSvg()
+	function hasArtistBadgeSvg(expectedChannelName)
 	{
-		return document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`) !== null;
+		const svgPath = document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`);
+		if (!svgPath) return false;
+
+		// Verify the found badge belongs to the current channel element, not a previous one
+		if (expectedChannelName)
+		{
+			const ownerContainer = svgPath.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
+			if (ownerContainer)
+			{
+				const text = ownerContainer.textContent?.trim() || "";
+				const cleanExpected = expectedChannelName.toLowerCase().replace(/\s+/g, " ").trim();
+				const cleanText = text.toLowerCase().replace(/\s+/g, " ").trim();
+				if (!cleanText.includes(cleanExpected))
+				{
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	function getVideoTitle()
@@ -108,9 +126,27 @@
 		return title ? TITLE_KEYWORDS_REGEX.test(title) : false;
 	}
 
-	function isOfficialArtistChannel()
+	function isOfficialArtistChannel(expectedChannelName)
 	{
-		return document.querySelector(BADGE_SELECTOR_COMBINED) !== null;
+		const badge = document.querySelector(BADGE_SELECTOR_COMBINED);
+		if (!badge) return false;
+
+		// Verify the found badge belongs to the current channel element, not a previous one
+		if (expectedChannelName)
+		{
+			const ownerContainer = badge.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
+			if (ownerContainer)
+			{
+				const text = ownerContainer.textContent?.trim() || "";
+				const cleanExpected = expectedChannelName.toLowerCase().replace(/\s+/g, " ").trim();
+				const cleanText = text.toLowerCase().replace(/\s+/g, " ").trim();
+				if (!cleanText.includes(cleanExpected))
+				{
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	function isMusicCategory(pr)
@@ -118,11 +154,26 @@
 		const category = pr?.microformat?.playerMicroformatRenderer?.category;
 		if (category && category.toLowerCase() === "music") return true;
 
-		if (isOfficialArtistChannel()) return true;
-		if (hasArtistBadgeSvg()) return true;
+		const expectedChannelName = pr?.videoDetails?.author;
+
+		if (isOfficialArtistChannel(expectedChannelName)) return true;
+		if (hasArtistBadgeSvg(expectedChannelName)) return true;
 
 		const title = pr?.videoDetails?.title || getVideoTitle();
 		return titleMatchesMusicKeyword(title);
+	}
+
+	function isDomSettledForChannel(expectedChannelName)
+	{
+		if (!expectedChannelName) return false;
+		const ownerEl = document.querySelector("#owner, ytd-channel-name");
+		if (!ownerEl) return false;
+
+		const text = ownerEl.textContent?.trim() || "";
+		const cleanExpected = expectedChannelName.toLowerCase().replace(/\s+/g, " ").trim();
+		const cleanText = text.toLowerCase().replace(/\s+/g, " ").trim();
+
+		return cleanText.includes(cleanExpected);
 	}
 
 	function isAdPlaying()
@@ -220,19 +271,27 @@
 		const def = getEfytDefaultSpeed();
 		const resolvedName = channelName || id;
 
-		if (Math.abs(speed - def) < 0.001)
+		try
 		{
-			localStorage.removeItem(CH_PREFIX + id);
-			console.log(`[EfYT-ChSpeed] Cleared override for ${resolvedName} (matches default ${def}x)`);
+			if (Math.abs(speed - def) < 0.001)
+			{
+				localStorage.removeItem(CH_PREFIX + id);
+				console.log(`[EfYT-ChSpeed] Cleared override for ${resolvedName} (matches default ${def}x)`);
+			}
+			else
+			{
+				const payload =
+				{
+					speed: speed,
+					name: channelName || "Unknown Channel"
+				};
+				localStorage.setItem(CH_PREFIX + id, JSON.stringify(payload));
+				console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${resolvedName}`);
+			}
 		}
-		else
+		catch (error)
 		{
-			const payload = {
-				speed: speed,
-				name: channelName || "Unknown Channel"
-			};
-			localStorage.setItem(CH_PREFIX + id, JSON.stringify(payload));
-			console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${resolvedName}`);
+			console.warn(`[EfYT-ChSpeed] Could not persist speed for ${resolvedName}:`, error);
 		}
 	}
 
@@ -383,8 +442,8 @@
 		if (!musicChecked)
 		{
 			const isMusic = isMusicCategory(pr);
-			const channelOwnerEl = document.querySelector("#owner, ytd-channel-name");
 			const channelName = lastChannelName || getChannelName(pr);
+			const domSettled = isDomSettledForChannel(channelName);
 
 			if (isMusic)
 			{
@@ -394,7 +453,7 @@
 				speedApplied = true; 
 				clearPolling();
 			}
-			else if (channelOwnerEl && speedApplied)
+			else if (domSettled && speedApplied)
 			{
 				console.log(`[EfYT-ChSpeed] DOM structure settled for ${channelName}. Running non-music configurations.`);
 
@@ -555,14 +614,18 @@
 
 		isOfficialArtistChannel()
 		{
-			const isArtist = isOfficialArtistChannel();
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const expectedName = pr?.videoDetails?.author;
+			const isArtist = isOfficialArtistChannel(expectedName);
 			console.log("[EfYT-ChSpeed] Official Artist Channel:", isArtist);
 			return isArtist;
 		},
 
 		hasArtistBadgeSvg()
 		{
-			const hasSvg = hasArtistBadgeSvg();
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const expectedName = pr?.videoDetails?.author;
+			const hasSvg = hasArtistBadgeSvg(expectedName);
 			console.log("[EfYT-ChSpeed] Artist badge SVG present:", hasSvg);
 			return hasSvg;
 		},
