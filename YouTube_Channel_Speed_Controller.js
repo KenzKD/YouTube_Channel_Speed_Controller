@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v26)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v27)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -7,9 +7,13 @@
 {
 	"use strict";
 
+	// Prevent duplicate instances if the script is injected multiple times
+	if (window.efytSpeedInitialized) return;
+	window.efytSpeedInitialized = true;
+
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
-	const BUTTONS_WAIT_TIMEOUT_MS = 1500; // Wait up to 1.5s for EfYT buttons before direct fallback
+	const BUTTONS_WAIT_TIMEOUT_MS = 1500; // Wait up to 1.5s after player is ready for EfYT buttons before direct fallback
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
@@ -71,10 +75,19 @@
 	let speedApplied      = false;
 	let musicChecked      = false;
 	let navigationStartTime = 0;
+	let playerReadyTime   = 0;
 	let navToken          = 0;
 	let observer          = null;
 	let observerTimeoutId = null;
 	let retryTimeoutId    = null;
+
+	// -----------------------------------------------------------
+	// Compiled CSS Selectors
+	// -----------------------------------------------------------
+
+	const CH_SELECTOR_COMBINED = CH_SELECTORS.join(", ");
+	const BADGE_SELECTOR_COMBINED = ARTIST_BADGE_SELECTORS.join(", ");
+	const TITLE_SELECTOR_COMBINED = TITLE_SELECTORS.join(", ");
 
 	// -----------------------------------------------------------
 	// Helpers
@@ -95,9 +108,10 @@
 
 	function getWatchVideoId()
 	{
-		return document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
-			?? document.getElementById("movie_player")?.getPlayerResponse?.()?.videoDetails?.videoId
-			?? new URLSearchParams(location.search).get("v");
+		// URL check is virtual and instantaneous; performs as fastest first-line check
+		return new URLSearchParams(location.search).get("v")
+			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
+			?? document.getElementById("movie_player")?.getPlayerResponse?.()?.videoDetails?.videoId;
 	}
 
 	function getChannelPathFromResponse(pr)
@@ -112,38 +126,26 @@
 			}
 			catch (_) {}
 		}
-		// Fallback to DOM elements
-		for (const sel of CH_SELECTORS)
+		// Combined native DOM query fallback
+		try
 		{
-			try
-			{
-				const path = new URL(document.querySelector(sel)?.href ?? "").pathname.toLowerCase();
-				if (path.startsWith("/@") || path.startsWith("/channel/")) return path;
-			}
-			catch (_) {}
+			const path = new URL(document.querySelector(CH_SELECTOR_COMBINED)?.href ?? "").pathname.toLowerCase();
+			if (path.startsWith("/@") || path.startsWith("/channel/")) return path;
 		}
+		catch (_) {}
 		return null;
 	}
 
 	function hasArtistBadgeSvg()
 	{
 		const scope = document.querySelector("#owner, ytd-channel-name") ?? document;
-		const paths = scope.querySelectorAll("svg path");
-		for (const path of paths)
-		{
-			if (path.getAttribute("d") === ARTIST_BADGE_SVG_PATH) return true;
-		}
-		return false;
+		// Performs direct matching in the browser's native C++ engine (zero loop overhead in JS)
+		return scope.querySelector(`path[d="${ARTIST_BADGE_SVG_PATH}"]`) !== null;
 	}
 
 	function getVideoTitle()
 	{
-		for (const sel of TITLE_SELECTORS)
-		{
-			const text = document.querySelector(sel)?.textContent?.trim();
-			if (text) return text;
-		}
-		return "";
+		return document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim() ?? "";
 	}
 
 	function titleMatchesMusicKeyword(title)
@@ -155,11 +157,7 @@
 
 	function isOfficialArtistChannel()
 	{
-		for (const sel of ARTIST_BADGE_SELECTORS)
-		{
-			if (document.querySelector(sel)) return true;
-		}
-		return false;
+		return document.querySelector(BADGE_SELECTOR_COMBINED) !== null;
 	}
 
 	function isMusicCategory(pr)
@@ -355,6 +353,7 @@
 			lastChannelId       = null;
 			speedApplied        = false;
 			musicChecked        = false;
+			playerReadyTime     = 0; // Reset player timer
 			navigationStartTime = Date.now();
 		}
 
@@ -363,10 +362,20 @@
 		const pr = playerEl?.getPlayerResponse?.();
 
 		// Guard: wait if elements or playerResponse are completely absent, or if playerResponse is stale
-		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId) return;
+		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId)
+		{
+			playerReadyTime = 0; // Keep reset while player is unpopulated
+			return;
+		}
+
+		// Initialize precise fallback timer starting from when the player is first confirmed ready
+		if (playerReadyTime === 0)
+		{
+			playerReadyTime = Date.now();
+		}
 
 		const hasButtons = document.getElementById("efyt-speed-plus") && document.getElementById("efyt-speed-minus");
-		const timeElapsed = Date.now() - navigationStartTime;
+		const timeElapsed = Date.now() - playerReadyTime;
 		const shouldFallback = timeElapsed >= BUTTONS_WAIT_TIMEOUT_MS;
 
 		// 1. Resolve and apply recorded channel speed
@@ -487,13 +496,31 @@
 
 	function onVideoNavigation()
 	{
-		// Always initialize the observer listening setup (handles cold load, SPA switches, and background states)
+		const videoId = getWatchVideoId();
+		if (!videoId)
+		{
+			disconnectObserver();
+			activeVideoId = null;
+			return;
+		}
+
+		// Deduplicate and ignore redundant trigger evaluations (such as cold-load late events)
+		if (activeVideoId === videoId)
+		{
+			return;
+		}
+
+		// Initialize state for the navigated video ID
+		console.log(`[EfYT-ChSpeed] New video navigation: ${videoId}`);
+		activeVideoId       = videoId;
 		lastChannelId       = null;
 		speedApplied        = false;
 		musicChecked        = false;
+		playerReadyTime     = 0; // Reset player timer
 		navigationStartTime = Date.now();
 		navToken++;
 
+		// Initialize observer and polling fallback
 		setupObserver();
 	}
 
