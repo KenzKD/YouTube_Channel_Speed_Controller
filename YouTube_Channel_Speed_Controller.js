@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v31)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v32)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -80,7 +80,7 @@
 	// Compile keywords into a single case-insensitive RegExp with word boundaries for short acronyms
 	const TITLE_KEYWORDS_REGEX = new RegExp(
 		TITLE_KEYWORDS.map(kw => {
-			const escaped = kw.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+			const escaped = kw.replace(/[\/\\^$*+?.()|[\]{}]/g, "\\$&");
 			return (kw === "mv" || kw === "sfx") ? `\\b${escaped}\\b` : escaped;
 		}).join("|"),
 		"i"
@@ -126,7 +126,6 @@
 	function hasArtistBadgeSvg()
 	{
 		const scope = document.querySelector("#owner, ytd-channel-name") ?? document;
-		// Performs direct matching in the browser's native C++ engine (zero loop overhead in JS)
 		return scope.querySelector(`path[d="${ARTIST_BADGE_SVG_PATH}"]`) !== null;
 	}
 
@@ -137,7 +136,7 @@
 
 	function titleMatchesMusicKeyword(title)
 	{
-		return TITLE_KEYWORDS_REGEX.test(title);
+		return title ? TITLE_KEYWORDS_REGEX.test(title) : false;
 	}
 
 	function isOfficialArtistChannel()
@@ -168,7 +167,7 @@
 	async function checkMixIsMusic(videoId)
 	{
 		if (!videoId) return null;
-		if (!window.ytcfg) return null;
+		if (!window.ytcfg?.get) return null;
 
 		const apiKey  = window.ytcfg.get("INNERTUBE_API_KEY");
 		const context = window.ytcfg.get("INNERTUBE_CONTEXT");
@@ -376,8 +375,9 @@
 			suppressSave        = true; // Enforce transition lock
 		}
 
-		const videoEl = document.querySelector("video");
 		const playerEl = document.getElementById("movie_player");
+		// Query inside the player element first for faster, scoped lookup
+		const videoEl = playerEl?.querySelector("video") || document.querySelector("video");
 		const pr = playerEl?.getPlayerResponse?.();
 
 		// Guard: wait if elements or playerResponse are completely absent, or if playerResponse is stale
@@ -432,6 +432,7 @@
 				// Run non-music operations only after standard channel speed has been successfully applied
 				console.log(`[EfYT-ChSpeed] DOM structure settled for ${channelName}. Running non-music configurations.`);
 
+				// Deep background check: ask the Mix API as a last-resort music classifier
 				checkMixIsMusic(videoId).then(isMixMusic =>
 				{
 					if (activeVideoId !== videoId) return;
@@ -584,7 +585,7 @@
 
 	window.efytSpeed =
 	{
-		refresh: () =>
+		refresh()
 		{
 			console.log("[EfYT-ChSpeed] Manual refresh.");
 			activeVideoId = null;
@@ -593,14 +594,14 @@
 			onVideoNavigation();
 		},
 
-		getWatchVideoId: () =>
+		getWatchVideoId()
 		{
 			const id = getWatchVideoId();
 			console.log("[EfYT-ChSpeed] Watch video ID:", id ?? "(not found)");
 			return id;
 		},
 
-		getChannelId: () =>
+		getChannelId()
 		{
 			const pr = document.getElementById("movie_player")?.getPlayerResponse();
 			const id = getChannelId(pr) ?? null;
@@ -608,21 +609,21 @@
 			return id;
 		},
 
-		isOfficialArtistChannel: () =>
+		isOfficialArtistChannel()
 		{
 			const isArtist = isOfficialArtistChannel();
 			console.log("[EfYT-ChSpeed] Official Artist Channel:", isArtist);
 			return isArtist;
 		},
 
-		hasArtistBadgeSvg: () =>
+		hasArtistBadgeSvg()
 		{
 			const hasSvg = hasArtistBadgeSvg();
 			console.log("[EfYT-ChSpeed] Artist badge SVG present:", hasSvg);
 			return hasSvg;
 		},
 
-		getVideoTitle: () =>
+		getVideoTitle()
 		{
 			const pr = document.getElementById("movie_player")?.getPlayerResponse();
 			const title = pr?.videoDetails?.title || getVideoTitle();
@@ -630,14 +631,14 @@
 			return title;
 		},
 
-		titleMatchesMusicKeyword: (title = (document.getElementById("movie_player")?.getPlayerResponse()?.videoDetails?.title || getVideoTitle())) =>
+		titleMatchesMusicKeyword(title = (document.getElementById("movie_player")?.getPlayerResponse()?.videoDetails?.title || getVideoTitle()))
 		{
 			const matches = titleMatchesMusicKeyword(title);
 			console.log(`[EfYT-ChSpeed] Title "${title}" matches keyword:`, matches);
 			return matches;
 		},
 
-		checkMixIsMusic: (videoId = getWatchVideoId()) =>
+		checkMixIsMusic(videoId = getWatchVideoId())
 		{
 			return checkMixIsMusic(videoId).then(isMusic =>
 			{
@@ -646,21 +647,21 @@
 			});
 		},
 
-		isMusicCategory: () =>
+		isMusicCategory()
 		{
 			const isMusic = isMusicCategory(document.getElementById("movie_player")?.getPlayerResponse());
 			console.log("[EfYT-ChSpeed] Is music category:", isMusic);
 			return isMusic;
 		},
 
-		getDefaultSpeed: () =>
+		getDefaultSpeed()
 		{
 			const s = getEfytDefaultSpeed();
 			console.log("[EfYT-ChSpeed] Default:", s + "x");
 			return s;
 		},
 
-		getSpeed: (id) =>
+		getSpeed(id)
 		{
 			const pr = document.getElementById("movie_player")?.getPlayerResponse();
 			const channelId = id || getChannelId(pr);
@@ -670,7 +671,7 @@
 			return s;
 		},
 
-		setSpeed: (speed, id) =>
+		setSpeed(speed, id)
 		{
 			const pr = document.getElementById("movie_player")?.getPlayerResponse();
 			const channelId = id || getChannelId(pr);
@@ -684,7 +685,7 @@
 			stepToSpeed(speed);
 		},
 
-		clearSpeed: (id) =>
+		clearSpeed(id)
 		{
 			const pr = document.getElementById("movie_player")?.getPlayerResponse();
 			const channelId = id || getChannelId(pr);
@@ -698,14 +699,14 @@
 			console.log(`[EfYT-ChSpeed] Cleared speed for ${name}.`);
 		},
 
-		clearAll: () =>
+		clearAll()
 		{
 			const keys = chKeys();
 			keys.forEach(k => localStorage.removeItem(k));
 			console.log(`[EfYT-ChSpeed] Cleared ${keys.length} override(s).`);
 		},
 
-		export: () =>
+		export()
 		{
 			const out = {};
 			chKeys().forEach(k => {
@@ -741,7 +742,7 @@
 			return out;
 		},
 
-		import: () =>
+		import()
 		{
 			const OVERLAY_ID = "efyt-chspeed-import-btn";
 			const OVERLAY_STYLE =
@@ -875,7 +876,7 @@
 			showImportButton();
 		},
 
-		help: () =>
+		help()
 		{
 			console.log
 			(
