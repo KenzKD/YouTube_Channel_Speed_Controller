@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v32)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v33)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -16,75 +16,45 @@
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
-	const ARTIST_BADGE_SELECTORS =
-	[
-		'badge-shape[aria-label="Official Artist Channel"]',
-		'[aria-label="Official Artist Channel"]',
-	];
+	
 	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 005.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
-	const TITLE_SELECTORS =
-	[
-		"ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string",
-		"#title h1 yt-formatted-string",
-		"h1.ytd-video-primary-info-renderer",
-	];
+
+	const BADGE_SELECTOR_COMBINED = 'badge-shape[aria-label="Official Artist Channel"], [aria-label="Official Artist Channel"]';
+	const TITLE_SELECTOR_COMBINED = "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer";
+
 	const TITLE_KEYWORDS =
 	[
-		// Official music releases
 		"official audio", "official video", "music video", "mv", "official lyric video", 
 		"official visualizer", "lyric video", "lyrics", "audio only", "visualizer",
-
-		// Dance / choreography
 		"dance video", "dance cover", "dance practice", "choreography", "choreo",
-
-		// Covers, remixes, mashups
 		"acoustic cover", "remix", "mashup", "type beat",
-
-		// DJ / live sets
 		"dj set", "live set", "live session", "live performance",
-
-		// Karaoke / instrumental
 		"karaoke", "instrumental", "backing track",
-
-		// Mood/background music playlists
 		"lofi", "lo-fi", "study music", "workout mix", "gym mix", "chill mix",
-
-		// Speed/pitch edits (common on music clips)
 		"sped up", "slowed", "nightcore", "8d audio",
-
-		// Full releases
-		"full album", "album stream",
-		
-		// SFX
-		"sfx", "sound effect",
+		"full album", "album stream", "sfx", "sound effect",
 	];
 
-	let suppressSave      = false;
-	let suppressTimeoutId = null;
-	let lastChannelId     = null;
-	let lastChannelName   = null;
-	let activeVideoId     = null;
-	let speedApplied      = false;
-	let musicChecked      = false;
-	let observer          = null;
-	let observerTimeoutId = null;
-	let retryTimeoutId    = null;
-
-	// -----------------------------------------------------------
-	// Compiled CSS & RegExp Selectors
-	// -----------------------------------------------------------
-
-	const BADGE_SELECTOR_COMBINED = ARTIST_BADGE_SELECTORS.join(", ");
-	const TITLE_SELECTOR_COMBINED = TITLE_SELECTORS.join(", ");
-
-	// Compile keywords into a single case-insensitive RegExp with word boundaries for short acronyms
+	// Compile keywords into a single case-insensitive RegExp
 	const TITLE_KEYWORDS_REGEX = new RegExp(
 		TITLE_KEYWORDS.map(kw => {
-			const escaped = kw.replace(/[\/\\^$*+?.()|[\]{}]/g, "\\$&");
+			const escaped = kw.replace(/[\/\\^$*+?.()|[\]{}]/g, "\\$&").replace(/\s+/g, "\\s+");
 			return (kw === "mv" || kw === "sfx") ? `\\b${escaped}\\b` : escaped;
 		}).join("|"),
 		"i"
 	);
+
+	// State Tracking
+	let suppressSave       = false;
+	let suppressTimeoutId  = null;
+	let lastChannelId      = null;
+	let lastChannelName    = null;
+	let activeVideoId      = null;
+	let speedApplied       = false;
+	let musicChecked       = false;
+	let retryTimeoutId     = null;
+	let cutoffTimeoutId    = null;
+	let mixAbortController = null;
 
 	// -----------------------------------------------------------
 	// Helpers
@@ -125,8 +95,7 @@
 
 	function hasArtistBadgeSvg()
 	{
-		const scope = document.querySelector("#owner, ytd-channel-name") ?? document;
-		return scope.querySelector(`path[d="${ARTIST_BADGE_SVG_PATH}"]`) !== null;
+		return document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`) !== null;
 	}
 
 	function getVideoTitle()
@@ -146,15 +115,12 @@
 
 	function isMusicCategory(pr)
 	{
-		// 1. Direct category metadata from YouTube's player response
 		const category = pr?.microformat?.playerMicroformatRenderer?.category;
 		if (category && category.toLowerCase() === "music") return true;
 
-		// 2. Official artist channel badges (loaded asynchronously in DOM)
 		if (isOfficialArtistChannel()) return true;
 		if (hasArtistBadgeSvg()) return true;
 
-		// 3. Keyword matches in title (including multilingual keywords)
 		const title = pr?.videoDetails?.title || getVideoTitle();
 		return titleMatchesMusicKeyword(title);
 	}
@@ -184,7 +150,14 @@
 			"&prettyPrint=false" +
 			"&key=" + apiKey;
 
+		// Cancel any outstanding fetch request from a previous navigation cycle
+		if (mixAbortController)
+		{
+			mixAbortController.abort();
+		}
 		const controller = new AbortController();
+		mixAbortController = controller;
+
 		const timeoutId  = setTimeout(() => controller.abort(), MIX_CHECK_TIMEOUT_MS);
 
 		try
@@ -218,6 +191,10 @@
 		finally
 		{
 			clearTimeout(timeoutId);
+			if (mixAbortController === controller)
+			{
+				mixAbortController = null;
+			}
 		}
 	}
 
@@ -285,7 +262,6 @@
 			}
 		}
 
-		// Fallback directly to native adjustments if EfYT controls are hidden
 		if (Math.abs(v.playbackRate - target) > 0.001)
 		{
 			v.playbackRate = target;
@@ -321,12 +297,9 @@
 		if (v.tagName !== "VIDEO" || !v.closest("#movie_player")) return;
 
 		const videoId = getWatchVideoId();
-		// Guard: If we are in the middle of transitioning, discard any ratechange trigger
 		if (!videoId || videoId !== activeVideoId) return;
 
 		const pr = document.getElementById("movie_player")?.getPlayerResponse();
-		
-		// Guard: Never record/save speed changes on classified music videos
 		if (isMusicCategory(pr)) return;
 
 		const id = lastChannelId || getChannelId(pr);
@@ -334,7 +307,6 @@
 
 		if (id)
 		{
-			// Guard: Only write to storage if the speed has actually changed from what is currently saved (or default)
 			const savedSpeed = loadChannelSpeed(id) ?? getEfytDefaultSpeed();
 			if (Math.abs(v.playbackRate - savedSpeed) < 0.001) return;
 
@@ -343,7 +315,7 @@
 	}
 
 	// -----------------------------------------------------------
-	// MutationObserver + Polling Page Evaluation Core
+	// Polling Page Evaluation Core
 	// -----------------------------------------------------------
 
 	function evaluateCurrentPage()
@@ -351,7 +323,6 @@
 		const videoId = getWatchVideoId();
 		if (!videoId)
 		{
-			// Reset session values if we navigate away from watch layout
 			if (activeVideoId !== null)
 			{
 				activeVideoId   = null;
@@ -363,7 +334,6 @@
 			return;
 		}
 
-		// Trigger session initialization dynamically upon detecting a new watch ID
 		if (activeVideoId !== videoId)
 		{
 			console.log(`[EfYT-ChSpeed] Evaluating video session: ${videoId}`);
@@ -372,18 +342,15 @@
 			lastChannelName     = null;
 			speedApplied        = false;
 			musicChecked        = false;
-			suppressSave        = true; // Enforce transition lock
+			suppressSave        = true;
 		}
 
 		const playerEl = document.getElementById("movie_player");
-		// Query inside the player element first for faster, scoped lookup
 		const videoEl = playerEl?.querySelector("video") || document.querySelector("video");
 		const pr = playerEl?.getPlayerResponse?.();
 
-		// Guard: wait if elements or playerResponse are completely absent, or if playerResponse is stale
 		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId) return;
 
-		// Guard: Strictly wait until the EfYT speed buttons are loaded in the scene
 		const hasButtons = document.getElementById("efyt-speed-plus") && document.getElementById("efyt-speed-minus");
 		if (!hasButtons) return;
 
@@ -424,15 +391,13 @@
 				console.log(`[EfYT-ChSpeed] Music video detected — forcing 1x speed for ${channelName}`);
 				applySpeedWithSuppress(1);
 				musicChecked = true;
-				speedApplied = true; // Clear need to apply standard channel speed configurations
-				disconnectObserver();
+				speedApplied = true; 
+				clearPolling();
 			}
 			else if (channelOwnerEl && speedApplied)
 			{
-				// Run non-music operations only after standard channel speed has been successfully applied
 				console.log(`[EfYT-ChSpeed] DOM structure settled for ${channelName}. Running non-music configurations.`);
 
-				// Deep background check: ask the Mix API as a last-resort music classifier
 				checkMixIsMusic(videoId).then(isMixMusic =>
 				{
 					if (activeVideoId !== videoId) return;
@@ -444,39 +409,23 @@
 				});
 
 				musicChecked = true;
-				disconnectObserver();
+				clearPolling();
 			}
 		}
 
-		// Cleanup observer when both processes are fully completed
 		if (speedApplied && musicChecked)
 		{
-			disconnectObserver();
+			clearPolling();
 		}
 	}
 
-	function setupObserver()
+	function setupPolling()
 	{
-		disconnectObserver();
-
-		// Enforce saving suppression during the active evaluation window
+		clearPolling();
 		suppressSave = true;
 
-		// Observe the document itself; always accessible, even at document-start
-		observer = new MutationObserver(() =>
-		{
-			evaluateCurrentPage();
-		});
-
-		observer.observe(document, {
-			childList: true,
-			subtree: true
-		});
-
-		// Fallback polling loop to catch Polymer updates that bypass standard childList mutations
 		function poll()
 		{
-			// If the user has opened this watch tab in the background, sleep/throttle loop to save CPU & battery
 			if (document.hidden)
 			{
 				retryTimeoutId = setTimeout(poll, 1000);
@@ -484,38 +433,31 @@
 			}
 
 			evaluateCurrentPage();
-			if (observer)
+			if (!speedApplied || !musicChecked)
 			{
-				retryTimeoutId = setTimeout(poll, 150); // Balanced active check rate
+				retryTimeoutId = setTimeout(poll, 150);
 			}
 		}
 		poll();
 
-		// Safety cutoff: teardown DOM checking and fallback polling after 5 seconds
-		observerTimeoutId = setTimeout(() =>
+		cutoffTimeoutId = setTimeout(() =>
 		{
-			disconnectObserver();
+			clearPolling();
 		}, 5000);
 	}
 
-	function disconnectObserver()
+	function clearPolling()
 	{
-		if (observer)
-		{
-			observer.disconnect();
-			observer = null;
-		}
-		if (observerTimeoutId)
-		{
-			clearTimeout(observerTimeoutId);
-			observerTimeoutId = null;
-		}
 		if (retryTimeoutId)
 		{
 			clearTimeout(retryTimeoutId);
 			retryTimeoutId = null;
 		}
-		// Safely release saving suppression lock when observation finishes or times out
+		if (cutoffTimeoutId)
+		{
+			clearTimeout(cutoffTimeoutId);
+			cutoffTimeoutId = null;
+		}
 		suppressSave = false;
 	}
 
@@ -524,18 +466,21 @@
 		const videoId = getWatchVideoId();
 		if (!videoId)
 		{
-			disconnectObserver();
+			clearPolling();
 			activeVideoId = null;
+			if (mixAbortController)
+			{
+				mixAbortController.abort();
+				mixAbortController = null;
+			}
 			return;
 		}
 
-		// Deduplicate and ignore redundant trigger evaluations (such as cold-load late events)
 		if (activeVideoId === videoId)
 		{
 			return;
 		}
 
-		// Initialize state for the navigated video ID
 		console.log(`[EfYT-ChSpeed] New video navigation: ${videoId}`);
 		activeVideoId       = videoId;
 		lastChannelId       = null;
@@ -543,23 +488,23 @@
 		speedApplied        = false;
 		musicChecked        = false;
 
-		// Initialize observer and polling fallback
-		setupObserver();
+		if (mixAbortController)
+		{
+			mixAbortController.abort();
+			mixAbortController = null;
+		}
+
+		setupPolling();
 	}
 
 	function onVisibilityChange()
 	{
-		// Wake up evaluation immediately upon tabbing back into YouTube to avoid any delay
 		if (!document.hidden)
 		{
-			if (observer)
+			if (!speedApplied || !musicChecked)
 			{
-				evaluateCurrentPage();
-			}
-			else if (!speedApplied || !musicChecked)
-			{
-				console.log("[EfYT-ChSpeed] Tab activated with unresolved state — re-arming observer.");
-				setupObserver();
+				console.log("[EfYT-ChSpeed] Tab activated with unresolved state — re-arming polling.");
+				setupPolling();
 				evaluateCurrentPage();
 			}
 		}
@@ -571,14 +516,13 @@
 
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
 	window.addEventListener("yt-page-data-updated", onVideoNavigation);
-	window.addEventListener("ratechange", onRateChange, true); // Captured window-level delegation
+	window.addEventListener("ratechange", onRateChange, true);
 	document.addEventListener("visibilitychange", onVisibilityChange);
 
-	// Evaluate initial state on startup
 	onVideoNavigation();
 
 	// -----------------------------------------------------------
-	// Public API — all internals exposed on window.efytSpeed
+	// Public API
 	// -----------------------------------------------------------
 
 	const chKeys = () => Object.keys(localStorage).filter(k => k.startsWith(CH_PREFIX));
