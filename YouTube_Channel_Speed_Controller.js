@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v28)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v29)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -13,18 +13,9 @@
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
-	const BUTTONS_WAIT_TIMEOUT_MS = 1500; // Wait up to 1.5s after player is ready for EfYT buttons before direct fallback
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
-	const CH_SELECTORS      =
-	[
-		"ytd-channel-name a",
-		"#channel-name a",
-		"yt-formatted-string#channel-name a",
-		"#owner a.yt-simple-endpoint[href*='/@']",
-		"a.yt-simple-endpoint[href*='/@']",
-	];
 	const ARTIST_BADGE_SELECTORS =
 	[
 		'badge-shape[aria-label="Official Artist Channel"]',
@@ -71,11 +62,11 @@
 	let suppressSave      = false;
 	let suppressTimeoutId = null;
 	let lastChannelId     = null;
+	let lastChannelName   = null;
 	let activeVideoId     = null;
 	let speedApplied      = false;
 	let musicChecked      = false;
 	let navigationStartTime = 0;
-	let playerReadyTime   = 0;
 	let navToken          = 0;
 	let observer          = null;
 	let observerTimeoutId = null;
@@ -85,7 +76,6 @@
 	// Compiled CSS Selectors
 	// -----------------------------------------------------------
 
-	const CH_SELECTOR_COMBINED = CH_SELECTORS.join(", ");
 	const BADGE_SELECTOR_COMBINED = ARTIST_BADGE_SELECTORS.join(", ");
 	const TITLE_SELECTOR_COMBINED = TITLE_SELECTORS.join(", ");
 
@@ -108,33 +98,22 @@
 
 	function getWatchVideoId()
 	{
-		// RegExp match on the query string; avoids constructor-based allocation overhead
 		const match = location.search.match(/[?&]v=([^&#]+)/);
 		return (match ? match[1] : null)
 			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
 			?? document.getElementById("movie_player")?.getPlayerResponse?.()?.videoDetails?.videoId;
 	}
 
-	function getChannelPathFromResponse(pr)
+	function getChannelId(pr)
 	{
-		const profileUrl = pr?.microformat?.playerMicroformatRenderer?.ownerProfileUrl;
-		if (profileUrl)
-		{
-			try
-			{
-				const path = new URL(profileUrl).pathname.toLowerCase();
-				if (path.startsWith("/@") || path.startsWith("/channel/")) return path;
-			}
-			catch (_) {}
-		}
-		// Combined native DOM query fallback
-		try
-		{
-			const path = new URL(document.querySelector(CH_SELECTOR_COMBINED)?.href ?? "").pathname.toLowerCase();
-			if (path.startsWith("/@") || path.startsWith("/channel/")) return path;
-		}
-		catch (_) {}
-		return null;
+		return pr?.videoDetails?.channelId;
+	}
+
+	function getChannelName(pr)
+	{
+		return pr?.videoDetails?.author 
+			?? document.querySelector("ytd-channel-name yt-formatted-string, #owner ytd-channel-name a")?.textContent?.trim() 
+			?? "Unknown Channel";
 	}
 
 	function hasArtistBadgeSvg()
@@ -240,25 +219,39 @@
 
 	function loadChannelSpeed(id)
 	{
-		const n = parseFloat(localStorage.getItem(CH_PREFIX + id));
-		return n > 0 ? n : null;
+		if (!id) return null;
+		try
+		{
+			const raw = localStorage.getItem(CH_PREFIX + id);
+			if (!raw) return null;
+			const data = JSON.parse(raw);
+			return data?.speed > 0 ? data.speed : null;
+		}
+		catch (_)
+		{
+			return null;
+		}
 	}
 
-	function saveChannelSpeed(id, speed)
+	function saveChannelSpeed(id, speed, channelName)
 	{
+		if (!id) return;
 		const def = getEfytDefaultSpeed();
+		const resolvedName = channelName || id;
+
 		if (Math.abs(speed - def) < 0.001)
 		{
-			if (localStorage.getItem(CH_PREFIX + id) !== null)
-			{
-				localStorage.removeItem(CH_PREFIX + id);
-				console.log(`[EfYT-ChSpeed] Cleared override for ${id} (matches default ${def}x)`);
-			}
+			localStorage.removeItem(CH_PREFIX + id);
+			console.log(`[EfYT-ChSpeed] Cleared override for ${resolvedName} (matches default ${def}x)`);
 		}
 		else
 		{
-			localStorage.setItem(CH_PREFIX + id, String(speed));
-			console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${id}`);
+			const payload = {
+				speed: speed,
+				name: channelName || "Unknown Channel"
+			};
+			localStorage.setItem(CH_PREFIX + id, JSON.stringify(payload));
+			console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${resolvedName}`);
 		}
 	}
 
@@ -323,8 +316,26 @@
 		const v = e.target;
 		if (v.tagName !== "VIDEO" || !v.closest("#movie_player")) return;
 
-		const id = lastChannelId || getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse());
-		if (id) saveChannelSpeed(id, v.playbackRate);
+		const videoId = getWatchVideoId();
+		// Guard: If we are in the middle of transitioning, discard any ratechange trigger
+		if (!videoId || videoId !== activeVideoId) return;
+
+		const pr = document.getElementById("movie_player")?.getPlayerResponse();
+		
+		// Guard: Never record/save speed changes on classified music videos
+		if (isMusicCategory(pr)) return;
+
+		const id = lastChannelId || getChannelId(pr);
+		const name = lastChannelName || getChannelName(pr);
+
+		if (id)
+		{
+			// Guard: Only write to storage if the speed has actually changed from what is currently saved (or default)
+			const savedSpeed = loadChannelSpeed(id) ?? getEfytDefaultSpeed();
+			if (Math.abs(v.playbackRate - savedSpeed) < 0.001) return;
+
+			saveChannelSpeed(id, v.playbackRate, name);
+		}
 	}
 
 	// -----------------------------------------------------------
@@ -339,9 +350,11 @@
 			// Reset session values if we navigate away from watch layout
 			if (activeVideoId !== null)
 			{
-				activeVideoId = null;
-				speedApplied  = false;
-				musicChecked  = false;
+				activeVideoId   = null;
+				lastChannelId   = null;
+				lastChannelName = null;
+				speedApplied    = false;
+				musicChecked    = false;
 			}
 			return;
 		}
@@ -352,10 +365,11 @@
 			console.log(`[EfYT-ChSpeed] Evaluating video session: ${videoId}`);
 			activeVideoId       = videoId;
 			lastChannelId       = null;
+			lastChannelName     = null;
 			speedApplied        = false;
 			musicChecked        = false;
-			playerReadyTime     = 0; // Reset player timer
 			navigationStartTime = Date.now();
+			suppressSave        = true; // Enforce transition lock
 		}
 
 		const videoEl = document.querySelector("video");
@@ -363,39 +377,31 @@
 		const pr = playerEl?.getPlayerResponse?.();
 
 		// Guard: wait if elements or playerResponse are completely absent, or if playerResponse is stale
-		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId)
-		{
-			playerReadyTime = 0; // Keep reset while player is unpopulated
-			return;
-		}
+		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId) return;
 
-		// Initialize precise fallback timer starting from when the player is first confirmed ready
-		if (playerReadyTime === 0)
-		{
-			playerReadyTime = Date.now();
-		}
-
+		// Guard: Strictly wait until the EfYT speed buttons are loaded in the scene
 		const hasButtons = document.getElementById("efyt-speed-plus") && document.getElementById("efyt-speed-minus");
-		const timeElapsed = Date.now() - playerReadyTime;
-		const shouldFallback = timeElapsed >= BUTTONS_WAIT_TIMEOUT_MS;
+		if (!hasButtons) return;
 
 		// 1. Resolve and apply recorded channel speed
-		if (!speedApplied && (hasButtons || shouldFallback))
+		if (!speedApplied)
 		{
-			const channelId = getChannelPathFromResponse(pr);
+			const channelId = getChannelId(pr);
+			const channelName = getChannelName(pr);
 			if (channelId)
 			{
-				lastChannelId = channelId;
+				lastChannelId   = channelId;
+				lastChannelName = channelName;
 				const saved = loadChannelSpeed(channelId);
 				if (saved)
 				{
-					console.log(`[EfYT-ChSpeed] Applying speed ${saved}x for ${channelId} (Buttons ready: ${!!hasButtons})`);
+					console.log(`[EfYT-ChSpeed] Applying speed ${saved}x for ${channelName}`);
 					applySpeedWithSuppress(saved);
 				}
 				else
 				{
 					const def = getEfytDefaultSpeed();
-					console.log(`[EfYT-ChSpeed] Applying default ${def}x for ${channelId} (Buttons ready: ${!!hasButtons})`);
+					console.log(`[EfYT-ChSpeed] Applying default ${def}x for ${channelName}`);
 					applySpeedWithSuppress(def);
 				}
 				speedApplied = true;
@@ -407,10 +413,11 @@
 		{
 			const isMusic = isMusicCategory(pr);
 			const channelOwnerEl = document.querySelector("#owner, ytd-channel-name");
+			const channelName = lastChannelName || getChannelName(pr);
 
-			if (isMusic && (hasButtons || shouldFallback))
+			if (isMusic)
 			{
-				console.log(`[EfYT-ChSpeed] Music video detected — forcing 1x speed (Buttons ready: ${!!hasButtons})`);
+				console.log(`[EfYT-ChSpeed] Music video detected — forcing 1x speed for ${channelName}`);
 				applySpeedWithSuppress(1);
 				musicChecked = true;
 				speedApplied = true; // Clear need to apply standard channel speed configurations
@@ -419,14 +426,14 @@
 			else if (channelOwnerEl && speedApplied)
 			{
 				// Run non-music operations only after standard channel speed has been successfully applied
-				console.log("[EfYT-ChSpeed] DOM structure settled. Running non-music configurations.");
+				console.log(`[EfYT-ChSpeed] DOM structure settled for ${channelName}. Running non-music configurations.`);
 
 				checkMixIsMusic(videoId).then(isMixMusic =>
 				{
 					if (activeVideoId !== videoId) return;
 					if (isMixMusic)
 					{
-						console.log("[EfYT-ChSpeed] Playlist Mix API confirmed Music — forcing 1x");
+						console.log(`[EfYT-ChSpeed] Playlist Mix API confirmed Music — forcing 1x speed for ${channelName}`);
 						applySpeedWithSuppress(1);
 					}
 				});
@@ -500,6 +507,8 @@
 			clearTimeout(retryTimeoutId);
 			retryTimeoutId = null;
 		}
+		// Safely release saving suppression lock when observation finishes or times out
+		suppressSave = false;
 	}
 
 	function onVideoNavigation()
@@ -522,11 +531,14 @@
 		console.log(`[EfYT-ChSpeed] New video navigation: ${videoId}`);
 		activeVideoId       = videoId;
 		lastChannelId       = null;
+		lastChannelName     = null;
 		speedApplied        = false;
 		musicChecked        = false;
-		playerReadyTime     = 0; // Reset player timer
 		navigationStartTime = Date.now();
 		navToken++;
+
+		// Suppress any saving during the initial transition/loading phase
+		suppressSave        = true;
 
 		// Initialize observer and polling fallback
 		setupObserver();
@@ -565,6 +577,7 @@
 			console.log("[EfYT-ChSpeed] Manual refresh.");
 			activeVideoId = null;
 			lastChannelId = null;
+			lastChannelName = null;
 			onVideoNavigation();
 		},
 
@@ -577,7 +590,8 @@
 
 		getChannelId: () =>
 		{
-			const id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse());
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const id = getChannelId(pr) ?? null;
 			console.log("[EfYT-ChSpeed] Channel ID:", id ?? "(not found)");
 			return id;
 		},
@@ -634,33 +648,42 @@
 			return s;
 		},
 
-		getSpeed: (id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse())) =>
+		getSpeed: (id) =>
 		{
-			const s = id && loadChannelSpeed(id);
-			console.log(`[EfYT-ChSpeed] Speed for ${id}:`, s ? s + "x" : "(none)");
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const channelId = id || getChannelId(pr);
+			const s = loadChannelSpeed(channelId);
+			const name = lastChannelName || (pr ? getChannelName(pr) : channelId);
+			console.log(`[EfYT-ChSpeed] Speed for ${name || "(none)"}:`, s ? s + "x" : "(none)");
 			return s;
 		},
 
-		setSpeed: (speed, id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse())) =>
+		setSpeed: (speed, id) =>
 		{
-			if (!id)
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const channelId = id || getChannelId(pr);
+			const name = lastChannelName || (pr ? getChannelName(pr) : channelId);
+			if (!channelId)
 			{
 				console.warn("[EfYT-ChSpeed] No channel detected.");
 				return;
 			}
-			saveChannelSpeed(id, speed);
+			saveChannelSpeed(channelId, speed, name);
 			stepToSpeed(speed);
 		},
 
-		clearSpeed: (id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse())) =>
+		clearSpeed: (id) =>
 		{
-			if (!id)
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const channelId = id || getChannelId(pr);
+			const name = lastChannelName || (pr ? getChannelName(pr) : channelId);
+			if (!channelId)
 			{
 				console.warn("[EfYT-ChSpeed] No channel detected.");
 				return;
 			}
-			localStorage.removeItem(CH_PREFIX + id);
-			console.log(`[EfYT-ChSpeed] Cleared speed for ${id}.`);
+			localStorage.removeItem(CH_PREFIX + channelId);
+			console.log(`[EfYT-ChSpeed] Cleared speed for ${name}.`);
 		},
 
 		clearAll: () =>
@@ -672,7 +695,19 @@
 
 		export: () =>
 		{
-			const out  = Object.fromEntries(chKeys().map(k => [k.slice(CH_PREFIX.length), parseFloat(localStorage.getItem(k))]));
+			const out = {};
+			chKeys().forEach(k => {
+				const key = k.slice(CH_PREFIX.length);
+				const raw = localStorage.getItem(k);
+				try
+				{
+					out[key] = JSON.parse(raw);
+				}
+				catch (_)
+				{
+					out[key] = { speed: parseFloat(raw), name: "Unknown" };
+				}
+			});
 			const json = JSON.stringify(out, null, 2);
 
 			const blob = new Blob([json], { type: "application/json" });
@@ -739,12 +774,15 @@
 				}
 
 				let count = 0;
-				for (const [id, sp] of Object.entries(parsed))
+				for (const [id, value] of Object.entries(parsed))
 				{
-					const n = parseFloat(sp);
-					if (isNaN(n) || n <= 0) continue;
-					localStorage.setItem(CH_PREFIX + id, String(n));
-					count++;
+					if (value && typeof value === "object" && value.speed !== undefined)
+					{
+						const speed = parseFloat(value.speed);
+						if (isNaN(speed) || speed <= 0) continue;
+						localStorage.setItem(CH_PREFIX + id, JSON.stringify(value));
+						count++;
+					}
 				}
 				console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
 			}
