@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v30)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v31)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -13,7 +13,6 @@
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
-	const BUTTONS_WAIT_TIMEOUT_MS = 1500; // Wait up to 1.5s after player is ready for EfYT buttons before direct fallback
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
@@ -67,19 +66,25 @@
 	let activeVideoId     = null;
 	let speedApplied      = false;
 	let musicChecked      = false;
-	let navigationStartTime = 0;
-	let playerReadyTime   = 0;
-	let navToken          = 0;
 	let observer          = null;
 	let observerTimeoutId = null;
 	let retryTimeoutId    = null;
 
 	// -----------------------------------------------------------
-	// Compiled CSS Selectors
+	// Compiled CSS & RegExp Selectors
 	// -----------------------------------------------------------
 
 	const BADGE_SELECTOR_COMBINED = ARTIST_BADGE_SELECTORS.join(", ");
 	const TITLE_SELECTOR_COMBINED = TITLE_SELECTORS.join(", ");
+
+	// Compile keywords into a single case-insensitive RegExp with word boundaries for short acronyms
+	const TITLE_KEYWORDS_REGEX = new RegExp(
+		TITLE_KEYWORDS.map(kw => {
+			const escaped = kw.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+			return (kw === "mv" || kw === "sfx") ? `\\b${escaped}\\b` : escaped;
+		}).join("|"),
+		"i"
+	);
 
 	// -----------------------------------------------------------
 	// Helpers
@@ -132,9 +137,7 @@
 
 	function titleMatchesMusicKeyword(title)
 	{
-		if (!title) return false;
-		const lower = title.toLowerCase();
-		return TITLE_KEYWORDS.some(kw => lower.includes(kw));
+		return TITLE_KEYWORDS_REGEX.test(title);
 	}
 
 	function isOfficialArtistChannel()
@@ -370,8 +373,6 @@
 			lastChannelName     = null;
 			speedApplied        = false;
 			musicChecked        = false;
-			playerReadyTime     = 0; // Reset player timer
-			navigationStartTime = Date.now();
 			suppressSave        = true; // Enforce transition lock
 		}
 
@@ -540,9 +541,6 @@
 		lastChannelName     = null;
 		speedApplied        = false;
 		musicChecked        = false;
-		playerReadyTime     = 0; // Reset player timer
-		navigationStartTime = Date.now();
-		navToken++;
 
 		// Initialize observer and polling fallback
 		setupObserver();
@@ -571,6 +569,7 @@
 	// -----------------------------------------------------------
 
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
+	window.addEventListener("yt-page-data-updated", onVideoNavigation);
 	window.addEventListener("ratechange", onRateChange, true); // Captured window-level delegation
 	document.addEventListener("visibilitychange", onVisibilityChange);
 
