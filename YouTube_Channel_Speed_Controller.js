@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v25)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v26)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -8,11 +8,8 @@
 	"use strict";
 
 	const SUPPRESS_RESET_MS = 500;
-	const RETRY_DELAY_MS = 1500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
-	const MAX_RETRIES       = 3;
-	const SETTLE_POLL_MS    = 200;
-	const SETTLE_MAX_POLLS  = 15;
+	const BUTTONS_WAIT_TIMEOUT_MS = 1500; // Wait up to 1.5s for EfYT buttons before direct fallback
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
@@ -39,70 +36,45 @@
 	const TITLE_KEYWORDS =
 	[
 		// Official music releases
-		"official audio",
-		"official video",
-		"music video",
-		"mv",
-		"official lyric video",
-		"official visualizer",
-		"lyric video",
-		"lyrics",
-		"audio only",
-		"visualizer",
+		"official audio", "official video", "music video", "mv", "official lyric video", 
+		"official visualizer", "lyric video", "lyrics", "audio only", "visualizer",
 
 		// Dance / choreography
-		"dance video",
-		"dance cover",
-		"dance practice",
-		"choreography",
-		"choreo",
+		"dance video", "dance cover", "dance practice", "choreography", "choreo",
 
 		// Covers, remixes, mashups
-		"acoustic cover",
-		"remix",
-		"mashup",
-		"type beat",
+		"acoustic cover", "remix", "mashup", "type beat",
 
 		// DJ / live sets
-		"dj set",
-		"live set",
-		"live session",
-		"live performance",
+		"dj set", "live set", "live session", "live performance",
 
 		// Karaoke / instrumental
-		"karaoke",
-		"instrumental",
-		"backing track",
+		"karaoke", "instrumental", "backing track",
 
 		// Mood/background music playlists
-		"lofi",
-		"lo-fi",
-		"study music",
-		"workout mix",
-		"gym mix",
-		"chill mix",
+		"lofi", "lo-fi", "study music", "workout mix", "gym mix", "chill mix",
 
 		// Speed/pitch edits (common on music clips)
-		"sped up",
-		"slowed",
-		"nightcore",
-		"8d audio",
+		"sped up", "slowed", "nightcore", "8d audio",
 
 		// Full releases
-		"full album",
-		"album stream",
+		"full album", "album stream",
 		
 		// SFX
-		"sfx",
-		"sound effect"
+		"sfx", "sound effect",
 	];
 
-	let suppressSave = false;
-	let settling     = false;
-	let video        = null;
-	let lastVideoId   = null;
-	let lastChannelId = null;
-	let navToken      = 0;
+	let suppressSave      = false;
+	let suppressTimeoutId = null;
+	let lastChannelId     = null;
+	let activeVideoId     = null;
+	let speedApplied      = false;
+	let musicChecked      = false;
+	let navigationStartTime = 0;
+	let navToken          = 0;
+	let observer          = null;
+	let observerTimeoutId = null;
+	let retryTimeoutId    = null;
 
 	// -----------------------------------------------------------
 	// Helpers
@@ -124,11 +96,23 @@
 	function getWatchVideoId()
 	{
 		return document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
+			?? document.getElementById("movie_player")?.getPlayerResponse?.()?.videoDetails?.videoId
 			?? new URLSearchParams(location.search).get("v");
 	}
 
-	function getChannelId()
+	function getChannelPathFromResponse(pr)
 	{
+		const profileUrl = pr?.microformat?.playerMicroformatRenderer?.ownerProfileUrl;
+		if (profileUrl)
+		{
+			try
+			{
+				const path = new URL(profileUrl).pathname.toLowerCase();
+				if (path.startsWith("/@") || path.startsWith("/channel/")) return path;
+			}
+			catch (_) {}
+		}
+		// Fallback to DOM elements
 		for (const sel of CH_SELECTORS)
 		{
 			try
@@ -164,6 +148,7 @@
 
 	function titleMatchesMusicKeyword(title)
 	{
+		if (!title) return false;
 		const lower = title.toLowerCase();
 		return TITLE_KEYWORDS.some(kw => lower.includes(kw));
 	}
@@ -174,44 +159,38 @@
 		{
 			if (document.querySelector(sel)) return true;
 		}
-
 		return false;
 	}
 
-	// meta[itemprop="genre"] is not used here — it doesn't update on
-	// SPA navigation, so it can get stuck reporting the first video's
-	// genre for the whole session. Only the artist badge and title
-	// keywords are used, since those stay accurate after navigating.
-	function isMusicCategory()
+	function isMusicCategory(pr)
 	{
+		// 1. Direct category metadata from YouTube's player response
+		const category = pr?.microformat?.playerMicroformatRenderer?.category;
+		if (category && category.toLowerCase() === "music") return true;
+
+		// 2. Official artist channel badges (loaded asynchronously in DOM)
 		if (isOfficialArtistChannel()) return true;
 		if (hasArtistBadgeSvg()) return true;
 
-		return titleMatchesMusicKeyword(getVideoTitle());
+		// 3. Keyword matches in title (including multilingual keywords)
+		const title = pr?.videoDetails?.title || getVideoTitle();
+		return titleMatchesMusicKeyword(title);
+	}
+
+	function isAdPlaying()
+	{
+		return document.querySelector(".ad-showing, .ad-interrupting, .html5-video-player.ad-showing") !== null;
 	}
 
 	async function checkMixIsMusic(videoId)
 	{
-		if (!videoId)
-		{
-			console.log("[EfYT-ChSpeed] Mix check: no video ID.");
-			return null;
-		}
-
-		if (!window.ytcfg)
-		{
-			console.log("[EfYT-ChSpeed] Mix check: ytcfg not available.");
-			return null;
-		}
+		if (!videoId) return null;
+		if (!window.ytcfg) return null;
 
 		const apiKey  = window.ytcfg.get("INNERTUBE_API_KEY");
 		const context = window.ytcfg.get("INNERTUBE_CONTEXT");
 
-		if (!apiKey || !context)
-		{
-			console.log("[EfYT-ChSpeed] Mix check: could not read Innertube API key/context.");
-			return null;
-		}
+		if (!apiKey || !context) return null;
 
 		const fields =
 			"contents.twoColumnWatchNextResults.playlist.playlist.contents." +
@@ -246,26 +225,12 @@
 				.map(item => item?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams)
 				.find(params => typeof params === "string");
 
-			if (!playerParams)
-			{
-				console.log("[EfYT-ChSpeed] Mix check: no playerParams found (likely no Mix for this video).");
-				return false;
-			}
+			if (!playerParams) return false;
 
-			const isMusic = playerParams.startsWith(PLAYER_PARAMS_MUSIC_PREFIX);
-			console.log(`[EfYT-ChSpeed] Mix check playerParams: ${playerParams} — Classified as Music: ${isMusic}`);
-			return isMusic;
+			return playerParams.startsWith(PLAYER_PARAMS_MUSIC_PREFIX);
 		}
 		catch (error)
 		{
-			if (error?.name === "AbortError")
-			{
-				console.log(`[EfYT-ChSpeed] Mix check: timed out after ${MIX_CHECK_TIMEOUT_MS}ms.`);
-			}
-			else
-			{
-				console.log("[EfYT-ChSpeed] Mix check request failed:", error);
-			}
 			return null;
 		}
 		finally
@@ -299,295 +264,248 @@
 	}
 
 	// -----------------------------------------------------------
-	// Generic "retry until condition holds" loop.
-	// -----------------------------------------------------------
-
-	function retryUntil(check, onFound, retriesLeft, onGiveUp)
-	{
-		if (check())
-		{
-			onFound();
-			return;
-		}
-
-		if (retriesLeft > 0)
-		{
-			setTimeout(() => retryUntil(check, onFound, retriesLeft - 1, onGiveUp), RETRY_DELAY_MS);
-		}
-		else
-		{
-			onGiveUp?.();
-		}
-	}
-
-	// -----------------------------------------------------------
-	// Wait for a new video-id, then give title/badge a short beat
-	// to catch up before running detection.
-	// -----------------------------------------------------------
-
-	function waitForNewVideoId(token, onFound, onGiveUp)
-	{
-		let pollsLeft = SETTLE_MAX_POLLS;
-
-		function poll()
-		{
-			if (token !== navToken) return;
-
-			const id = getWatchVideoId();
-
-			if (id && id !== lastVideoId)
-			{
-				lastVideoId = id;
-				onFound(id);
-				return;
-			}
-
-			if (pollsLeft-- > 0)
-			{
-				setTimeout(poll, SETTLE_POLL_MS);
-			}
-			else
-			{
-				onGiveUp?.();
-			}
-		}
-
-		poll();
-	}
-
-	// -----------------------------------------------------------
-	// Step EfYT to target speed using its own +/- buttons
+	// Programmatic Speed Shifting
 	// -----------------------------------------------------------
 
 	function stepToSpeed(target)
 	{
-		const v     = document.querySelector("video");
+		const v = document.querySelector("video");
+		if (!v) return false;
+
 		const plus  = document.getElementById("efyt-speed-plus");
 		const minus = document.getElementById("efyt-speed-minus");
 
-		if (!v || !plus || !minus)
+		if (plus && minus)
 		{
-			console.warn("[EfYT-ChSpeed] stepToSpeed: video or EfYT buttons not found yet.", { v: !!v, plus: !!plus, minus: !!minus });
-			return false;
-		}
+			const MAX_CLICKS = 30;
+			let guard = 0;
 
-		const MAX_CLICKS = 30; // safety cap
-		let guard = 0;
-
-		while (Math.abs(v.playbackRate - target) > 0.001 && guard++ < MAX_CLICKS)
-		{
-			const before = v.playbackRate;
-			(target > before ? plus : minus).click();
-
-			if (v.playbackRate === before)
+			while (Math.abs(v.playbackRate - target) > 0.001 && guard++ < MAX_CLICKS)
 			{
-				// Stuck at a boundary — can't get any closer.
-				console.warn(`[EfYT-ChSpeed] stepToSpeed: stuck at ${before}x, target ${target}x unreachable.`);
-				return false;
+				const before = v.playbackRate;
+				(target > before ? plus : minus).click();
+
+				if (v.playbackRate === before) break;
 			}
 		}
 
-		console.log(`[EfYT-ChSpeed] Stepped to ${v.playbackRate}x`);
+		// Fallback directly to native adjustments if EfYT controls are hidden
+		if (Math.abs(v.playbackRate - target) > 0.001)
+		{
+			v.playbackRate = target;
+			console.log(`[EfYT-ChSpeed] PlaybackRate set directly to ${target}x (UI controls unavailable)`);
+		}
+
 		return Math.abs(v.playbackRate - target) < 0.001;
 	}
 
 	function applySpeedWithSuppress(target)
 	{
 		suppressSave = true;
-		if (stepToSpeed(target))
-		{
-			setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-		}
-		else
+		if (suppressTimeoutId) clearTimeout(suppressTimeoutId);
+
+		stepToSpeed(target);
+
+		suppressTimeoutId = setTimeout(() =>
 		{
 			suppressSave = false;
-		}
-	}
-
-	function restoreOrDefaultSpeed(id)
-	{
-		const saved = loadChannelSpeed(id);
-		if (saved)
-		{
-			console.log(`[EfYT-ChSpeed] Restoring ${saved}x for ${id}`);
-			applySpeedWithSuppress(saved);
-		}
-		else
-		{
-			console.log(`[EfYT-ChSpeed] No saved speed for ${id}`);
-			applySpeedWithSuppress(getEfytDefaultSpeed());
-		}
+			suppressTimeoutId = null;
+		}, SUPPRESS_RESET_MS);
 	}
 
 	// -----------------------------------------------------------
-	// Main
+	// Captured Event Delegation
 	// -----------------------------------------------------------
 
-	function onRateChange()
+	function onRateChange(e)
 	{
-		if (settling)
-		{
-			console.log("[EfYT-ChSpeed] Ignoring ratechange while settling.");
-			return;
-		}
+		if (suppressSave || isAdPlaying()) return;
 
-		const id = lastChannelId ?? getChannelId();
-		if (!suppressSave && id) saveChannelSpeed(id, video.playbackRate);
+		const v = e.target;
+		if (v.tagName !== "VIDEO" || !v.closest("#movie_player")) return;
+
+		const id = lastChannelId || getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse());
+		if (id) saveChannelSpeed(id, v.playbackRate);
 	}
 
-	function forceMusicSpeed(retriesLeft = MAX_RETRIES)
+	// -----------------------------------------------------------
+	// MutationObserver + Polling Page Evaluation Core
+	// -----------------------------------------------------------
+
+	function evaluateCurrentPage()
 	{
-		console.log("[EfYT-ChSpeed] Music detected — forcing 1x");
-		suppressSave = true;
-		const ok = stepToSpeed(1);
-
-		if (!ok && retriesLeft > 0)
+		const videoId = getWatchVideoId();
+		if (!videoId)
 		{
-			suppressSave = false;
-			setTimeout(() => forceMusicSpeed(retriesLeft - 1), RETRY_DELAY_MS);
-			return;
-		}
-
-		if (!ok)
-		{
-			console.warn("[EfYT-ChSpeed] forceMusicSpeed: gave up forcing 1x after max retries.");
-		}
-
-		setTimeout(() => { suppressSave = false; }, SUPPRESS_RESET_MS);
-	}
-
-	function applySpeedForCurrentVideo(token)
-	{
-		settling = true;
-
-		retryUntil
-		(
-			() =>
+			// Reset session values if we navigate away from watch layout
+			if (activeVideoId !== null)
 			{
-				const id = getChannelId();
-				return !!id && id !== lastChannelId;
-			},
-			() => finishChannelStep(token),
-			MAX_RETRIES,
-			() => finishChannelStep(token)
-		);
-	}
-
-	function finishChannelStep(token)
-	{
-		if (token !== navToken)
-		{
-			settling = false;
-			return;
-		}
-
-		const id = getChannelId();
-		if (id)
-		{
-			lastChannelId = id;
-			restoreOrDefaultSpeed(id);
-		}
-
-		// Runs after the channel speed is applied, so music always wins last.
-		// Runs after the channel speed is applied, so music always wins last.
-		retryUntil
-		(
-			isMusicCategory,
-			() =>
-			{
-				if (token === navToken) forceMusicSpeed();
-			},
-			MAX_RETRIES,
-			() =>
-			{
-				settling = false;
-
-				// Sync checks (badge/title) found nothing — ask the Mix API
-				// as a last resort before giving up on this video.
-				checkMixIsMusic(getWatchVideoId()).then(isMusic =>
-				{
-					if (token !== navToken) return;
-					if (isMusic) forceMusicSpeed();
-				});
+				activeVideoId = null;
+				speedApplied  = false;
+				musicChecked  = false;
 			}
-		);
+			return;
+		}
 
-		settling = false;
+		// Trigger session initialization dynamically upon detecting a new watch ID
+		if (activeVideoId !== videoId)
+		{
+			console.log(`[EfYT-ChSpeed] Evaluating video session: ${videoId}`);
+			activeVideoId       = videoId;
+			lastChannelId       = null;
+			speedApplied        = false;
+			musicChecked        = false;
+			navigationStartTime = Date.now();
+		}
+
+		const videoEl = document.querySelector("video");
+		const playerEl = document.getElementById("movie_player");
+		const pr = playerEl?.getPlayerResponse?.();
+
+		// Guard: wait if elements or playerResponse are completely absent, or if playerResponse is stale
+		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId) return;
+
+		const hasButtons = document.getElementById("efyt-speed-plus") && document.getElementById("efyt-speed-minus");
+		const timeElapsed = Date.now() - navigationStartTime;
+		const shouldFallback = timeElapsed >= BUTTONS_WAIT_TIMEOUT_MS;
+
+		// 1. Resolve and apply recorded channel speed
+		if (!speedApplied && (hasButtons || shouldFallback))
+		{
+			const channelId = getChannelPathFromResponse(pr);
+			if (channelId)
+			{
+				lastChannelId = channelId;
+				const saved = loadChannelSpeed(channelId);
+				if (saved)
+				{
+					console.log(`[EfYT-ChSpeed] Applying speed ${saved}x for ${channelId} (Buttons ready: ${!!hasButtons})`);
+					applySpeedWithSuppress(saved);
+				}
+				else
+				{
+					const def = getEfytDefaultSpeed();
+					console.log(`[EfYT-ChSpeed] Applying default ${def}x for ${channelId} (Buttons ready: ${!!hasButtons})`);
+					applySpeedWithSuppress(def);
+				}
+				speedApplied = true;
+			}
+		}
+
+		// 2. Resolve and apply forced 1x music speed
+		if (!musicChecked)
+		{
+			const isMusic = isMusicCategory(pr);
+			const channelOwnerEl = document.querySelector("#owner, ytd-channel-name");
+
+			if (isMusic && (hasButtons || shouldFallback))
+			{
+				console.log(`[EfYT-ChSpeed] Music video detected — forcing 1x speed (Buttons ready: ${!!hasButtons})`);
+				applySpeedWithSuppress(1);
+				musicChecked = true;
+				speedApplied = true; // Clear need to apply standard channel speed configurations
+				disconnectObserver();
+			}
+			else if (channelOwnerEl && speedApplied)
+			{
+				// Run non-music operations only after standard channel speed has been successfully applied
+				console.log("[EfYT-ChSpeed] DOM structure settled. Running non-music configurations.");
+
+				checkMixIsMusic(videoId).then(isMixMusic =>
+				{
+					if (activeVideoId !== videoId) return;
+					if (isMixMusic)
+					{
+						console.log("[EfYT-ChSpeed] Playlist Mix API confirmed Music — forcing 1x");
+						applySpeedWithSuppress(1);
+					}
+				});
+
+				musicChecked = true;
+				disconnectObserver();
+			}
+		}
+
+		// Cleanup observer when both processes are fully completed
+		if (speedApplied && musicChecked)
+		{
+			disconnectObserver();
+		}
 	}
 
-	function bindVideo(v)
+	function setupObserver()
 	{
-		if (v === video) return;
+		disconnectObserver();
 
-		video?.removeEventListener("ratechange", onRateChange);
-		v.addEventListener("ratechange", onRateChange);
-		video = v;
+		// Observe the document itself; always accessible, even at document-start
+		observer = new MutationObserver(() =>
+		{
+			evaluateCurrentPage();
+		});
+
+		observer.observe(document, {
+			childList: true,
+			subtree: true
+		});
+
+		// Fallback polling loop to catch Polymer updates that bypass standard childList mutations
+		function poll()
+		{
+			evaluateCurrentPage();
+			if (observer)
+			{
+				retryTimeoutId = setTimeout(poll, 100);
+			}
+		}
+		poll();
+
+		// Safety cutoff: teardown DOM checking and fallback polling after 5 seconds
+		observerTimeoutId = setTimeout(() =>
+		{
+			disconnectObserver();
+		}, 5000);
+	}
+
+	function disconnectObserver()
+	{
+		if (observer)
+		{
+			observer.disconnect();
+			observer = null;
+		}
+		if (observerTimeoutId)
+		{
+			clearTimeout(observerTimeoutId);
+			observerTimeoutId = null;
+		}
+		if (retryTimeoutId)
+		{
+			clearTimeout(retryTimeoutId);
+			retryTimeoutId = null;
+		}
 	}
 
 	function onVideoNavigation()
 	{
-		const v = document.querySelector("video");
-		if (!v) return;
+		// Always initialize the observer listening setup (handles cold load, SPA switches, and background states)
+		lastChannelId       = null;
+		speedApplied        = false;
+		musicChecked        = false;
+		navigationStartTime = Date.now();
+		navToken++;
 
-		bindVideo(v);
-
-		const myToken = ++navToken;
-
-		settling = true;
-
-		let resolved = false;
-
-		function proceed()
-		{
-			if (resolved || myToken !== navToken) return;
-			resolved = true;
-
-			if (v.readyState >= 1)
-			{
-				applySpeedForCurrentVideo(myToken);
-			}
-			else
-			{
-				v.addEventListener("loadedmetadata", () => applySpeedForCurrentVideo(myToken), { once: true });
-			}
-		}
-
-		function onPageDataUpdated()
-		{
-			const id = getWatchVideoId();
-			if (id && id !== lastVideoId)
-			{
-				lastVideoId = id;
-				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
-				proceed();
-			}
-		}
-
-		window.addEventListener("yt-page-data-updated", onPageDataUpdated);
-
-		waitForNewVideoId
-		(
-			myToken,
-			() =>
-			{
-				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
-				proceed();
-			},
-			() =>
-			{
-				window.removeEventListener("yt-page-data-updated", onPageDataUpdated);
-
-				// Skip if the fast path already resolved this navigation,
-				// so a stale timeout can't clobber an in-progress restore.
-				if (resolved) return;
-
-				console.warn("[EfYT-ChSpeed] Gave up waiting for video-id to change.");
-				settling = false;
-			}
-		);
+		setupObserver();
 	}
 
+	// -----------------------------------------------------------
+	// Event Listeners
+	// -----------------------------------------------------------
+
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
+	window.addEventListener("ratechange", onRateChange, true); // Captured window-level delegation
+
+	// Evaluate initial state on startup
+	onVideoNavigation();
 
 	// -----------------------------------------------------------
 	// Public API — all internals exposed on window.efytSpeed
@@ -600,7 +518,7 @@
 		refresh: () =>
 		{
 			console.log("[EfYT-ChSpeed] Manual refresh.");
-			lastVideoId = null;
+			activeVideoId = null;
 			lastChannelId = null;
 			onVideoNavigation();
 		},
@@ -614,7 +532,7 @@
 
 		getChannelId: () =>
 		{
-			const id = getChannelId();
+			const id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse());
 			console.log("[EfYT-ChSpeed] Channel ID:", id ?? "(not found)");
 			return id;
 		},
@@ -635,12 +553,13 @@
 
 		getVideoTitle: () =>
 		{
-			const title = getVideoTitle();
+			const pr = document.getElementById("movie_player")?.getPlayerResponse();
+			const title = pr?.videoDetails?.title || getVideoTitle();
 			console.log("[EfYT-ChSpeed] Video title:", title || "(not found)");
 			return title;
 		},
 
-		titleMatchesMusicKeyword: (title = getVideoTitle()) =>
+		titleMatchesMusicKeyword: (title = (document.getElementById("movie_player")?.getPlayerResponse()?.videoDetails?.title || getVideoTitle())) =>
 		{
 			const matches = titleMatchesMusicKeyword(title);
 			console.log(`[EfYT-ChSpeed] Title "${title}" matches keyword:`, matches);
@@ -658,7 +577,7 @@
 
 		isMusicCategory: () =>
 		{
-			const isMusic = isMusicCategory();
+			const isMusic = isMusicCategory(document.getElementById("movie_player")?.getPlayerResponse());
 			console.log("[EfYT-ChSpeed] Is music category:", isMusic);
 			return isMusic;
 		},
@@ -670,14 +589,14 @@
 			return s;
 		},
 
-		getSpeed: (id = getChannelId()) =>
+		getSpeed: (id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse())) =>
 		{
 			const s = id && loadChannelSpeed(id);
 			console.log(`[EfYT-ChSpeed] Speed for ${id}:`, s ? s + "x" : "(none)");
 			return s;
 		},
 
-		setSpeed: (speed, id = getChannelId()) =>
+		setSpeed: (speed, id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse())) =>
 		{
 			if (!id)
 			{
@@ -688,7 +607,7 @@
 			stepToSpeed(speed);
 		},
 
-		clearSpeed: (id = getChannelId()) =>
+		clearSpeed: (id = getChannelPathFromResponse(document.getElementById("movie_player")?.getPlayerResponse())) =>
 		{
 			if (!id)
 			{
@@ -800,7 +719,7 @@
 				const overlayController = new AbortController();
 				const inputController   = new AbortController();
 
-				setTimeout
+				const timeoutId = setTimeout
 				(
 					() =>
 					{
@@ -844,6 +763,7 @@
 					"click",
 					() =>
 					{
+						clearTimeout(timeoutId);
 						overlayController.abort();
 						overlay.remove();
 						input.click();
@@ -875,7 +795,7 @@
   efytSpeed.checkMixIsMusic([id])          → async Mix-API fallback check
 
 %cNavigation
-%c  efytSpeed.getWatchVideoId()              → ytd-watch-flexy's current video-id
+%c  efytSpeed.getWatchVideoId()              → current video ID
 
 %cChannel speed
 %c  efytSpeed.getChannelId()                 → current channel path
