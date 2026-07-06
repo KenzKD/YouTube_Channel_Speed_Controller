@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v35)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v36)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -10,6 +10,14 @@
 	// Prevent duplicate instances if the script is injected multiple times
 	if (window.efytSpeedInitialized) return;
 	window.efytSpeedInitialized = true;
+
+	// ============================================================
+	// CONFIGURATION FALLBACK
+	// Under Chromium Browsers, the extension settings are isolated.
+	// Adjust this variable to match the global default speed you 
+	// have configured in your extension options (e.g., 2 for 2x).
+	// ============================================================
+	const DEFAULT_SPEED_FALLBACK = 2; 
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
@@ -64,12 +72,13 @@
 	{
 		try
 		{
-			const speed = JSON.parse(localStorage.getItem(EFYT_KEY))?.speed;
-			return speed > 0 ? speed : 1;
+			const raw = localStorage.getItem(EFYT_KEY);
+			const speed = raw ? JSON.parse(raw)?.speed : null;
+			return (speed !== null && speed !== undefined && speed > 0) ? speed : DEFAULT_SPEED_FALLBACK;
 		}
 		catch
 		{
-			return 1;
+			return DEFAULT_SPEED_FALLBACK;
 		}
 	}
 
@@ -666,7 +675,7 @@
 				console.warn("[EfYT-ChSpeed] No channel detected.");
 				return;
 			}
-			localStorage.removeItem(CH_PREFIX + channelId);
+			localStorage.removeItem(CH_PREFIX + id);
 			console.log(`[EfYT-ChSpeed] Cleared speed for ${name}.`);
 		},
 
