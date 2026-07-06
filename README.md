@@ -16,17 +16,31 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 
 ---
 
+Here is an improved version of the installation instructions. This revision fixes the broken step numbering, standardizes the bold text for settings, formats the code block for clarity, and adds a brief technical note to the caution block to explain why step 8 is necessary.
+
+***
+
 ## Installation
+
 1. Install the [Enhancer for YouTube™](https://www.mrfdev.com/enhancer-for-youtube) extension for Chrome, Edge, or Firefox.
-2. Open the EfYT options page by clicking the extension icon in your browser toolbar.
-3. Go to the **Playback Speed** section.
-4. Select your Default Playback Speed.
-5. Disable the "Override default playback speeds" option.
+2. Open the **Enhancer for YouTube™ Options** page by clicking the extension icon in your browser toolbar.
+3. Navigate to the **Playback Speed** section.
+4. Select your preferred **Default Playback Speed**.
+5. Disable the **"Override default playback speeds"** option.
 6. Scroll down to the **Custom Script** section.
-7. Copy the entire contents of [YouTube_Channel_Speed_Controller.js](https://github.com/KenzKD/YouTube_Channel_Speed_Controller/blob/main/YouTube_Channel_Speed_Controller.js) and paste it into the Custom Script text area.
-8. Click **Save**.
-9. Enable the "Automatically execute the script when YouTube is loaded in a tab" option.
-10. Reload any open YouTube tabs.
+7. Copy the entire contents of [YouTube_Channel_Speed_Controller.js](https://github.com/KenzKD/YouTube_Channel_Speed_Controller/blob/main/YouTube_Channel_Speed_Controller.js) and paste them into the Custom Script text area.
+8. Near the top of the pasted script, locate the line:
+
+   ```javascript
+   const DEFAULT_SPEED_FALLBACK = 2;
+   ```
+   Change the number `2` to match the Default Playback Speed you selected in step 4.
+ > [!WARNING]
+ > Step 8 is necessary for modern Chromium-based browsers.
+
+9. Click **Save**.
+10. Enable the **"Automatically execute the script when YouTube is loaded in a tab"** option.
+11. Reload any open YouTube tabs.
 
 > [!TIP]
 > You can learn how to set up keyboard shortcuts for EfYT here: [Manage Extension Shortcuts](https://www.mrfdev.com/manage-extension-shortcuts).
