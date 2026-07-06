@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v23)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v24)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -36,6 +36,7 @@
 	];
 	const TITLE_KEYWORDS =
 	[
+		// Official music releases
 		"official audio",
 		"official video",
 		"official music video",
@@ -45,6 +46,49 @@
 		"lyrics",
 		"audio only",
 		"visualizer",
+
+		// Dance / choreography
+		"dance video",
+		"dance cover",
+		"dance practice",
+		"choreography",
+		"choreo",
+
+		// Covers, remixes, mashups
+		"cover",
+		"acoustic cover",
+		"remix",
+		"mashup",
+		"type beat",
+
+		// DJ / live sets
+		"dj set",
+		"live set",
+		"live session",
+		"live performance",
+
+		// Karaoke / instrumental
+		"karaoke",
+		"instrumental",
+		"backing track",
+
+		// Mood/background music playlists
+		"lofi",
+		"lo-fi",
+		"study music",
+		"workout mix",
+		"gym mix",
+		"chill mix",
+
+		// Speed/pitch edits (common on music clips)
+		"sped up",
+		"slowed",
+		"nightcore",
+		"8d audio",
+
+		// Full releases
+		"full album",
+		"album stream",
 	];
 
 	let suppressSave = false;
