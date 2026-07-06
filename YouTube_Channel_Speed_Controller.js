@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v27)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v28)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -108,8 +108,9 @@
 
 	function getWatchVideoId()
 	{
-		// URL check is virtual and instantaneous; performs as fastest first-line check
-		return new URLSearchParams(location.search).get("v")
+		// RegExp match on the query string; avoids constructor-based allocation overhead
+		const match = location.search.match(/[?&]v=([^&#]+)/);
+		return (match ? match[1] : null)
 			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
 			?? document.getElementById("movie_player")?.getPlayerResponse?.()?.videoDetails?.videoId;
 	}
@@ -460,10 +461,17 @@
 		// Fallback polling loop to catch Polymer updates that bypass standard childList mutations
 		function poll()
 		{
+			// If the user has opened this watch tab in the background, sleep/throttle loop to save CPU & battery
+			if (document.hidden)
+			{
+				retryTimeoutId = setTimeout(poll, 1000);
+				return;
+			}
+
 			evaluateCurrentPage();
 			if (observer)
 			{
-				retryTimeoutId = setTimeout(poll, 100);
+				retryTimeoutId = setTimeout(poll, 150); // Balanced active check rate
 			}
 		}
 		poll();
@@ -524,12 +532,22 @@
 		setupObserver();
 	}
 
+	function onVisibilityChange()
+	{
+		// Wake up evaluation immediately upon tabbing back into YouTube to avoid any delay
+		if (!document.hidden && observer)
+		{
+			evaluateCurrentPage();
+		}
+	}
+
 	// -----------------------------------------------------------
 	// Event Listeners
 	// -----------------------------------------------------------
 
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
 	window.addEventListener("ratechange", onRateChange, true); // Captured window-level delegation
+	document.addEventListener("visibilitychange", onVisibilityChange);
 
 	// Evaluate initial state on startup
 	onVideoNavigation();
