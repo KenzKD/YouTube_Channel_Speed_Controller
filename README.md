@@ -16,10 +16,6 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 
 ---
 
-Here is an improved version of the installation instructions. This revision fixes the broken step numbering, standardizes the bold text for settings, formats the code block for clarity, and adds a brief technical note to the caution block to explain why step 8 is necessary.
-
-***
-
 ## Installation
 
 1. Install the [Enhancer for YouTube™](https://www.mrfdev.com/enhancer-for-youtube) extension for Chrome, Edge, or Firefox.
