@@ -22,10 +22,9 @@ Automatically saves and restores your preferred playback speed on a per-channel 
 2. Open the **Enhancer for YouTube™ Options** page by clicking the extension icon in your browser toolbar.
 3. Navigate to the **Playback Speed** section.
 4. Select your preferred **Default Playback Speed**.
-5. Disable the **"Override default playback speeds"** option.
-6. Scroll down to the **Custom Script** section.
-7. Copy the entire contents of [YouTube_Channel_Speed_Controller.js](https://github.com/KenzKD/YouTube_Channel_Speed_Controller/blob/main/YouTube_Channel_Speed_Controller.js) and paste them into the Custom Script text area.
-8. Near the top of the pasted script, locate the line:
+5. Scroll down to the **Custom Script** section.
+6. Copy the entire contents of [YouTube_Channel_Speed_Controller.js](https://github.com/KenzKD/YouTube_Channel_Speed_Controller/blob/main/YouTube_Channel_Speed_Controller.js) and paste them into the Custom Script text area.
+7. Near the top of the pasted script, locate the line:
 
    ```javascript
    const DEFAULT_SPEED_FALLBACK = 2;
@@ -34,9 +33,9 @@ Automatically saves and restores your preferred playback speed on a per-channel 
  > [!WARNING]
  > Step 8 is necessary for modern Chromium-based browsers.
 
-9. Click **Save**.
-10. Enable the **"Automatically execute the script when YouTube is loaded in a tab"** option.
-11. Reload any open YouTube tabs.
+8. Click **Save**.
+9. Enable the **"Automatically execute the script when YouTube is loaded in a tab"** option.
+10. Reload any open YouTube tabs.
 
 > [!TIP]
 > You can learn how to set up keyboard shortcuts for EfYT here: [Manage Extension Shortcuts](https://www.mrfdev.com/manage-extension-shortcuts).
