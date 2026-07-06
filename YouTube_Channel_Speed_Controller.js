@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v29)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v30)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -13,6 +13,7 @@
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
+	const BUTTONS_WAIT_TIMEOUT_MS = 1500; // Wait up to 1.5s after player is ready for EfYT buttons before direct fallback
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX         = "efyt_ch_speed::";
@@ -67,6 +68,7 @@
 	let speedApplied      = false;
 	let musicChecked      = false;
 	let navigationStartTime = 0;
+	let playerReadyTime   = 0;
 	let navToken          = 0;
 	let observer          = null;
 	let observerTimeoutId = null;
@@ -368,6 +370,7 @@
 			lastChannelName     = null;
 			speedApplied        = false;
 			musicChecked        = false;
+			playerReadyTime     = 0; // Reset player timer
 			navigationStartTime = Date.now();
 			suppressSave        = true; // Enforce transition lock
 		}
@@ -454,6 +457,9 @@
 	{
 		disconnectObserver();
 
+		// Enforce saving suppression during the active evaluation window
+		suppressSave = true;
+
 		// Observe the document itself; always accessible, even at document-start
 		observer = new MutationObserver(() =>
 		{
@@ -534,11 +540,9 @@
 		lastChannelName     = null;
 		speedApplied        = false;
 		musicChecked        = false;
+		playerReadyTime     = 0; // Reset player timer
 		navigationStartTime = Date.now();
 		navToken++;
-
-		// Suppress any saving during the initial transition/loading phase
-		suppressSave        = true;
 
 		// Initialize observer and polling fallback
 		setupObserver();
@@ -547,9 +551,18 @@
 	function onVisibilityChange()
 	{
 		// Wake up evaluation immediately upon tabbing back into YouTube to avoid any delay
-		if (!document.hidden && observer)
+		if (!document.hidden)
 		{
-			evaluateCurrentPage();
+			if (observer)
+			{
+				evaluateCurrentPage();
+			}
+			else if (!speedApplied || !musicChecked)
+			{
+				console.log("[EfYT-ChSpeed] Tab activated with unresolved state — re-arming observer.");
+				setupObserver();
+				evaluateCurrentPage();
+			}
 		}
 	}
 
