@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v39.2)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v40)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
