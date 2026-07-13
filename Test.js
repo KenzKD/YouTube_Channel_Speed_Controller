@@ -40,9 +40,9 @@
 	});
 
 	// Backup active video playback rate using window.efytSpeed functions
-	const originalChannelId = window.efytSpeed.getChannelId();
+	const originalChannelId = window.efytSpeed.fetchChannelId();
 	const originalSpeed = originalChannelId 
-		? (window.efytSpeed.getSpeed(originalChannelId) ?? window.efytSpeed.getDefaultSpeed())
+		? (window.efytSpeed.loadChannelSpeed(originalChannelId) ?? window.efytSpeed.getEfytDefaultSpeed())
 		: null;
 
 	try {
@@ -50,8 +50,8 @@
 		// 2. LOCAL STORAGE CRUD TESTS
 		// ============================================================
 		const testChannel = "test_ch_diagnostics";
-		window.efytSpeed.setSpeed(1.75, testChannel);
-		assert(window.efytSpeed.getSpeed(testChannel) === 1.75, "setSpeed() accurately writes and getSpeed() retrieves a custom channel rate");
+		window.efytSpeed.saveChannelSpeed(1.75, testChannel);
+		assert(window.efytSpeed.loadChannelSpeed(testChannel) === 1.75, "saveChannelSpeed() accurately writes and loadChannelSpeed() retrieves a custom channel rate");
 
 		// Verify direct localStorage structure
 		const rawStorage = JSON.parse(localStorage.getItem(EFYT_PREFIX + testChannel));
@@ -59,11 +59,11 @@
 
 		// Test: clearSpeed
 		window.efytSpeed.clearSpeed(testChannel);
-		assert(window.efytSpeed.getSpeed(testChannel) === null, "clearSpeed() removes specified channel override");
+		assert(window.efytSpeed.loadChannelSpeed(testChannel) === null, "clearSpeed() removes specified channel override");
 
 		// Test: clearAll
-		window.efytSpeed.setSpeed(1.25, "temp_ch_a");
-		window.efytSpeed.setSpeed(1.5, "temp_ch_b");
+		window.efytSpeed.saveChannelSpeed(1.25, "temp_ch_a");
+		window.efytSpeed.saveChannelSpeed(1.5, "temp_ch_b");
 		window.efytSpeed.clearAll();
 		const activeKeysCount = Object.keys(localStorage).filter(k => k.startsWith(EFYT_PREFIX)).length;
 		assert(activeKeysCount === 0, "clearAll() clears active overrides from localStorage");
@@ -80,23 +80,23 @@
 		];
 
 		matchTests.forEach(({ title, expected }) => {
-			const isMatch = window.efytSpeed.titleMatchesMusicKeyword(title);
-			assert(isMatch === expected, `titleMatchesMusicKeyword() classified "${title}" as ${isMatch}`);
+			const isMatch = window.efytSpeed.checkTitleMatchesMusicKeyword(title);
+			assert(isMatch === expected, `checkTitleMatchesMusicKeyword() classified "${title}" as ${isMatch}`);
 		});
 
 		// ============================================================
 		// 4. LIVE DOM DETECTION
 		// ============================================================
 		try {
-			const retrievedTitle = window.efytSpeed.getVideoTitle();
-			assert(typeof retrievedTitle === "string" && retrievedTitle.length > 0, `getVideoTitle() successfully extracts live title: "${retrievedTitle}"`);
+			const retrievedTitle = window.efytSpeed.fetchVideoTitle();
+			assert(typeof retrievedTitle === "string" && retrievedTitle.length > 0, `fetchVideoTitle() successfully extracts live title: "${retrievedTitle}"`);
 
 			// Runs detection strictly against the real active DOM elements on the page
-			const artistBadgeMatch = window.efytSpeed.isOfficialArtistChannel();
-			assert(typeof artistBadgeMatch === "boolean", `isOfficialArtistChannel() runs on live page: ${artistBadgeMatch}`);
+			const artistBadgeMatch = window.efytSpeed.checkOfficialArtistChannel();
+			assert(typeof artistBadgeMatch === "boolean", `checkOfficialArtistChannel() runs on live page: ${artistBadgeMatch}`);
 
-			const svgPathMatch = window.efytSpeed.hasArtistBadgeSvg();
-			assert(typeof svgPathMatch === "boolean", `hasArtistBadgeSvg() runs on live page: ${svgPathMatch}`);
+			const svgPathMatch = window.efytSpeed.checkArtistBadgeSvg();
+			assert(typeof svgPathMatch === "boolean", `checkArtistBadgeSvg() runs on live page: ${svgPathMatch}`);
 		} catch (error) {
 			console.error("An error occurred during live DOM tests:", error);
 			results.failed++;
@@ -107,14 +107,14 @@
 		// ============================================================
 		try {
 			// Query the active video ID, or fall back to a standard music video ID if on a non-watch page
-			const testVideoId = window.efytSpeed.getWatchVideoId() || "kJQP7kiw5Fk";
-			const mixResult = await window.efytSpeed.checkMixIsMusic(testVideoId);
+			const testVideoId = window.efytSpeed.fetchWatchVideoId() || "kJQP7kiw5Fk";
+			const mixResult = await window.efytSpeed.verifyMixIsMusic(testVideoId);
 			assert(
 				mixResult === true || mixResult === false || mixResult === null,
-				`checkMixIsMusic() resolved diagnostic run on ID "${testVideoId}" (Result: ${mixResult})`
+				`verifyMixIsMusic() resolved diagnostic run on ID "${testVideoId}" (Result: ${mixResult})`
 			);
 		} catch (error) {
-			console.error("An error occurred during checkMixIsMusic testing:", error);
+			console.error("An error occurred during verifyMixIsMusic testing:", error);
 			results.failed++;
 		}
 
@@ -122,9 +122,9 @@
 		// 6. DATA PORTABILITY
 		// ============================================================
 		try {
-			window.efytSpeed.setSpeed(1.5, "temp_export_ch");
-			const exportObject = window.efytSpeed.export();
-			assert(exportObject && exportObject["temp_export_ch"] !== undefined, "export() gathers valid configurations as a key-value structure");
+			window.efytSpeed.saveChannelSpeed(1.5, "temp_export_ch");
+			const exportObject = window.efytSpeed.exportChannelSpeeds();
+			assert(exportObject && exportObject["temp_export_ch"] !== undefined, "exportChannelSpeeds() gathers valid configurations as a key-value structure");
 			window.efytSpeed.clearSpeed("temp_export_ch");
 		} catch (error) {
 			console.error("An error occurred during export testing:", error);
@@ -132,9 +132,9 @@
 		}
 
 		try {
-			window.efytSpeed.import();
+			window.efytSpeed.importChannelSpeeds();
 			const importBtn = document.getElementById("efyt-chspeed-import-btn");
-			assert(importBtn !== null, "import() renders overlay button for choosing file");
+			assert(importBtn !== null, "importChannelSpeeds() renders overlay button for choosing file");
 			if (importBtn) importBtn.remove();
 		} catch (error) {
 			console.error("An error occurred during import testing:", error);
@@ -151,8 +151,8 @@
 		
 		// 1. Reset physical playback rate using the helper function first
 		if (originalChannelId && originalSpeed !== null) {
-			window.efytSpeed.setSpeed(originalSpeed, originalChannelId);
-			console.log(`%c[Backup] Restored active channel speed to ${originalSpeed}x via setSpeed().`, "color:#aaa; font-style:italic;");
+			window.efytSpeed.saveChannelSpeed(originalSpeed, originalChannelId);
+			console.log(`%c[Backup] Restored active channel speed to ${originalSpeed}x via saveChannelSpeed().`, "color:#aaa; font-style:italic;");
 		}
 
 		// 2. Remove any transient configurations generated during active test assertions
@@ -187,7 +187,7 @@
 
 	// Live diagnostics on current page
 	console.log("%c[Live Environment Context]", "color:#fff; font-weight:bold; text-decoration: underline;");
-	console.log("  Current Watch Video ID :", window.efytSpeed.getWatchVideoId() || "(Not on a video page)");
-	console.log("  Current Channel ID     :", window.efytSpeed.getChannelId() || "(Not on a video page)");
+	console.log("  Current Watch Video ID :", window.efytSpeed.fetchWatchVideoId() || "(Not on a video page)");
+	console.log("  Current Channel ID     :", window.efytSpeed.fetchChannelId() || "(Not on a video page)");
 	console.log("  Is Music Detected      :", window.efytSpeed.isMusicCategory());
 })();

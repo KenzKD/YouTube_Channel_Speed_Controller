@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v41)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v42)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -265,6 +265,8 @@
 	// ============================================================
 	// STORAGE & CONTROLS
 	// ============================================================
+	const fetchChannelKeys = () => Object.keys(localStorage).filter(storageKey => storageKey.startsWith(CH_PREFIX));
+
 	function loadChannelSpeed(channelId)
 	{
 		if (!channelId) return null;
@@ -354,6 +356,149 @@
 		{ 
 			state.suppressSave = false; 
 		}, SUPPRESS_RESET_MS);
+	}
+
+	function listChannelSpeeds()
+	{
+		const channelKeys = fetchChannelKeys();
+		const tabularData = channelKeys.map(storageKey =>
+		{
+			try
+			{
+				const parsed = JSON.parse(localStorage.getItem(storageKey));
+				return {
+					"Channel ID": storageKey.slice(CH_PREFIX.length),
+					"Channel Name": parsed?.name || "Unknown",
+					"Speed Overrides": (parsed?.speed || 0) + "x"
+				};
+			}
+			catch
+			{
+				return {
+					"Channel ID": storageKey.slice(CH_PREFIX.length),
+					"Channel Name": "Unknown",
+					"Speed Overrides": localStorage.getItem(storageKey) + "x"
+				};
+			}
+		});
+
+		if (tabularData.length > 0)
+		{
+			console.table(tabularData);
+		}
+		else
+		{
+			log("No channel speed overrides currently configured.");
+		}
+	}
+
+	function exportChannelSpeeds()
+	{
+		const exportedData = Object.fromEntries(fetchChannelKeys().map(storageKey =>
+		{
+			const rawData = localStorage.getItem(storageKey);
+			try
+			{
+				return [storageKey.slice(CH_PREFIX.length), JSON.parse(rawData)];
+			}
+			catch
+			{
+				return [storageKey.slice(CH_PREFIX.length), { speed: parseFloat(rawData), name: "Unknown" }];
+			}
+		}));
+
+		const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(exportedData, null, 2)], { type: "application/json" }));
+		const downloadAnchor = Object.assign(document.createElement("a"), { href: blobUrl, download: `efyt-channel-speeds_${new Date().toISOString().replace(/[:.]/g, "-")}.json` });
+		
+		document.body.appendChild(downloadAnchor);
+		downloadAnchor.click();
+		downloadAnchor.remove();
+		URL.revokeObjectURL(blobUrl);
+		
+		log(`Exported ${Object.keys(exportedData).length} channel(s)`);
+		return exportedData;
+	}
+
+	function importChannelSpeeds()
+	{
+		const OVERLAY_ID = "efyt-chspeed-import-btn";
+		if (document.getElementById(OVERLAY_ID)) return log("Import button is already visible.");
+
+		const overlayButton = document.createElement("button");
+		overlayButton.id = OVERLAY_ID;
+		overlayButton.textContent = "📂 Click to choose EfYT speeds JSON";
+		
+		Object.assign(overlayButton.style,
+		{
+			position: "fixed",
+			top: "16px",
+			right: "16px",
+			zIndex: "999999",
+			padding: "40px 56px",
+			background: "#065fd4",
+			color: "#fff",
+			border: "none",
+			borderRadius: "24px",
+			fontSize: "52px",
+			cursor: "pointer",
+			boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
+		});
+
+		const fileInput = Object.assign(document.createElement("input"),
+		{
+			type: "file",
+			accept: ".json,application/json",
+			style: "display:none"
+		});
+		
+		const cleanupElements = () =>
+		{
+			overlayButton.remove();
+			fileInput.remove();
+		};
+
+		fileInput.addEventListener("change", () =>
+		{
+			cleanupElements();
+			const selectedFile = fileInput.files?.[0];
+			if (!selectedFile || (selectedFile.type !== "application/json" && !selectedFile.name.endsWith(".json"))) return err("Import failed — invalid file type.");
+
+			const fileReader = new FileReader();
+			
+			fileReader.onload = () =>
+			{
+				try
+				{
+					const parsedData = JSON.parse(fileReader.result);
+					let importedCount = 0;
+					
+					for (const [channelId, channelData] of Object.entries(parsedData))
+					{
+						if (channelData?.speed > 0)
+						{
+							localStorage.setItem(CH_PREFIX + channelId, JSON.stringify(channelData));
+							importedCount++;
+						}
+					}
+					log(`Imported ${importedCount} channel(s).`);
+				}
+				catch
+				{
+					err("Import failed — invalid JSON format.");
+				}
+			};
+			fileReader.readAsText(selectedFile);
+		});
+
+		overlayButton.addEventListener("click", () =>
+		{
+			cleanupElements();
+			fileInput.click();
+		});
+		
+		document.body.append(overlayButton, fileInput);
+		setTimeout(cleanupElements, 8000);
+		log("Click the blue button in the top-right corner to select a file.");
 	}
 
 	// ============================================================
@@ -543,8 +688,6 @@
 	// ============================================================
 	// PUBLIC API
 	// ============================================================
-	const fetchChannelKeys = () => Object.keys(localStorage).filter(storageKey => storageKey.startsWith(CH_PREFIX));
-
 	window.efytSpeed =
 	{
 		refresh()
@@ -554,21 +697,21 @@
 			onVideoNavigation();
 		},
 
-		getWatchVideoId()
+		fetchWatchVideoId()
 		{
 			const videoId = fetchWatchVideoId();
 			log("Watch ID:", videoId);
 			return videoId;
 		},
 
-		getChannelId()
+		fetchChannelId()
 		{
 			const channelId = fetchChannelId();
 			log("Channel ID:", channelId);
 			return channelId;
 		},
 
-		isOfficialArtistChannel()
+		checkOfficialArtistChannel()
 		{
 			const pr = fetchPlayerResponse();
 			const isArtist = checkOfficialArtistChannel(pr?.videoDetails?.author);
@@ -576,7 +719,7 @@
 			return isArtist;
 		},
 
-		hasArtistBadgeSvg()
+		checkArtistBadgeSvg()
 		{
 			const pr = fetchPlayerResponse();
 			const hasBadge = checkArtistBadgeSvg(pr?.videoDetails?.author);
@@ -584,21 +727,21 @@
 			return hasBadge;
 		},
 
-		getVideoTitle()
+		fetchVideoTitle()
 		{
 			const videoTitle = fetchVideoTitle();
 			log("Video Title:", videoTitle);
 			return videoTitle;
 		},
 
-		titleMatchesMusicKeyword(videoTitle = fetchVideoTitle())
+		checkTitleMatchesMusicKeyword(videoTitle = fetchVideoTitle())
 		{
 			const isMatch = checkTitleMatchesMusicKeyword(videoTitle);
 			log(`Title matches keyword:`, isMatch);
 			return isMatch;
 		},
 
-		async checkMixIsMusic(videoId = fetchWatchVideoId())
+		async verifyMixIsMusic(videoId = fetchWatchVideoId())
 		{
 			const isMixMusic = await verifyMixIsMusic(videoId);
 			log("Playlist mix confirmed music:", isMixMusic);
@@ -612,14 +755,14 @@
 			return isMusic;
 		},
 
-		getDefaultSpeed()
+		getEfytDefaultSpeed()
 		{
 			const defaultSpeed = getEfytDefaultSpeed();
 			log("Default EfYT Speed:", defaultSpeed + "x");
 			return defaultSpeed;
 		},
 
-		getSpeed(channelId)
+		loadChannelSpeed(channelId)
 		{
 			const targetChannelId = channelId || fetchChannelId();
 			const savedSpeed = loadChannelSpeed(targetChannelId);
@@ -628,7 +771,7 @@
 			return savedSpeed;
 		},
 
-		setSpeed(targetSpeed, channelId)
+		saveChannelSpeed(targetSpeed, channelId)
 		{
 			const playerResponse = fetchPlayerResponse();
 			const targetChannelId = channelId || fetchChannelId(playerResponse);
@@ -655,147 +798,19 @@
 			log(`Cleared ${channelKeys.length} saved channel override(s).`);
 		},
 
-		list()
+		listChannelSpeeds()
 		{
-			const channelKeys = fetchChannelKeys();
-			const tabularData = channelKeys.map(storageKey =>
-			{
-				try
-				{
-					const parsed = JSON.parse(localStorage.getItem(storageKey));
-					return {
-						"Channel ID": storageKey.slice(CH_PREFIX.length),
-						"Channel Name": parsed?.name || "Unknown",
-						"Speed Overrides": (parsed?.speed || 0) + "x"
-					};
-				}
-				catch
-				{
-					return {
-						"Channel ID": storageKey.slice(CH_PREFIX.length),
-						"Channel Name": "Unknown",
-						"Speed Overrides": localStorage.getItem(storageKey) + "x"
-					};
-				}
-			});
-
-			if (tabularData.length > 0)
-			{
-				console.table(tabularData);
-			}
-			else
-			{
-				log("No channel speed overrides currently configured.");
-			}
+			listChannelSpeeds();
 		},
 
-		export()
+		exportChannelSpeeds()
 		{
-			const exportedData = Object.fromEntries(fetchChannelKeys().map(storageKey =>
-			{
-				const rawData = localStorage.getItem(storageKey);
-				try
-				{
-					return [storageKey.slice(CH_PREFIX.length), JSON.parse(rawData)];
-				}
-				catch
-				{
-					return [storageKey.slice(CH_PREFIX.length), { speed: parseFloat(rawData), name: "Unknown" }];
-				}
-			}));
-
-			const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(exportedData, null, 2)], { type: "application/json" }));
-			const downloadAnchor = Object.assign(document.createElement("a"), { href: blobUrl, download: `efyt-channel-speeds_${new Date().toISOString().replace(/[:.]/g, "-")}.json` });
-			
-			document.body.appendChild(downloadAnchor);
-			downloadAnchor.click();
-			downloadAnchor.remove();
-			URL.revokeObjectURL(blobUrl);
-			
-			log(`Exported ${Object.keys(exportedData).length} channel(s)`);
-			return exportedData;
+			return exportChannelSpeeds();
 		},
 
-		import()
+		importChannelSpeeds()
 		{
-			const OVERLAY_ID = "efyt-chspeed-import-btn";
-			if (document.getElementById(OVERLAY_ID)) return log("Import button is already visible.");
-
-			const overlayButton = document.createElement("button");
-			overlayButton.id = OVERLAY_ID;
-			overlayButton.textContent = "📂 Click to choose EfYT speeds JSON";
-			
-			Object.assign(overlayButton.style,
-			{
-				position: "fixed",
-				top: "16px",
-				right: "16px",
-				zIndex: "999999",
-				padding: "40px 56px",
-				background: "#065fd4",
-				color: "#fff",
-				border: "none",
-				borderRadius: "24px",
-				fontSize: "52px",
-				cursor: "pointer",
-				boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
-			});
-
-			const fileInput = Object.assign(document.createElement("input"),
-			{
-				type: "file",
-				accept: ".json,application/json",
-				style: "display:none"
-			});
-			
-			const cleanupElements = () =>
-			{
-				overlayButton.remove();
-				fileInput.remove();
-			};
-
-			fileInput.addEventListener("change", () =>
-			{
-				cleanupElements();
-				const selectedFile = fileInput.files?.[0];
-				if (!selectedFile || (selectedFile.type !== "application/json" && !selectedFile.name.endsWith(".json"))) return err("Import failed — invalid file type.");
-
-				const fileReader = new FileReader();
-				
-				fileReader.onload = () =>
-				{
-					try
-					{
-						const parsedData = JSON.parse(fileReader.result);
-						let importedCount = 0;
-						
-						for (const [channelId, channelData] of Object.entries(parsedData))
-						{
-							if (channelData?.speed > 0)
-							{
-								localStorage.setItem(CH_PREFIX + channelId, JSON.stringify(channelData));
-								importedCount++;
-							}
-						}
-						log(`Imported ${importedCount} channel(s).`);
-					}
-					catch
-					{
-						err("Import failed — invalid JSON format.");
-					}
-				};
-				fileReader.readAsText(selectedFile);
-			});
-
-			overlayButton.addEventListener("click", () =>
-			{
-				cleanupElements();
-				fileInput.click();
-			});
-			
-			document.body.append(overlayButton, fileInput);
-			setTimeout(cleanupElements, 8000);
-			log("Click the blue button in the top-right corner to select a file.");
+			importChannelSpeeds();
 		},
 
 		help()
@@ -805,31 +820,31 @@
 				`%c[EfYT-ChSpeed] Commands:
 
 %cDetection
-%c  efytSpeed.isMusicCategory()              → true if any detection layer matches
-  efytSpeed.isOfficialArtistChannel()      → checks badge selectors only
-  efytSpeed.hasArtistBadgeSvg()            → checks badge SVG icon
-  efytSpeed.getVideoTitle()                → current video title
-  efytSpeed.titleMatchesMusicKeyword([t])  → test a title against keywords
-  efytSpeed.checkMixIsMusic([id])          → async Mix-API fallback check
+%c  efytSpeed.isMusicCategory()                 → true if any detection layer matches
+  efytSpeed.checkOfficialArtistChannel()      → checks badge selectors only
+  efytSpeed.checkArtistBadgeSvg()             → checks badge SVG icon
+  efytSpeed.fetchVideoTitle()                 → current video title
+  efytSpeed.checkTitleMatchesMusicKeyword([t]) → test a title against keywords
+  efytSpeed.verifyMixIsMusic([id])             → async Mix-API fallback check
 
 %cNavigation
-%c  efytSpeed.getWatchVideoId()              → current video ID
+%c  efytSpeed.fetchWatchVideoId()               → current video ID
 
 %cChannel speed
-%c  efytSpeed.getChannelId()                 → current channel path
-  efytSpeed.getDefaultSpeed()              → EfYT's global default speed
-  efytSpeed.getSpeed([id])                 → saved speed for a channel
-  efytSpeed.setSpeed(n [,id])              → set + save speed for a channel
-  efytSpeed.clearSpeed([id])               → remove override for a channel
-  efytSpeed.clearAll()                     → remove all saved overrides
+%c  efytSpeed.fetchChannelId()                  → current channel path
+  efytSpeed.getEfytDefaultSpeed()             → EfYT's global default speed
+  efytSpeed.loadChannelSpeed([id])            → saved speed for a channel
+  efytSpeed.saveChannelSpeed(n [,id])         → set + save speed for a channel
+  efytSpeed.clearSpeed([id])                  → remove override for a channel
+  efytSpeed.clearAll()                        → remove all saved overrides
 
 %cData
-%c  efytSpeed.list()                         → display all overrides in a table
-  efytSpeed.export()                       → log and download overrides as JSON
-  efytSpeed.import()                       → pick a .json file to import
+%c  efytSpeed.listChannelSpeeds()               → display all overrides in a table
+  efytSpeed.exportChannelSpeeds()             → log and download overrides as JSON
+  efytSpeed.importChannelSpeeds()             → pick a .json file to import
 
 %cMisc
-%c  efytSpeed.refresh()                      → manually re-run detection now`,
+%c  efytSpeed.refresh()                         → manually re-run detection now`,
 				"color:#fff;font-weight:bold",
 				"color:#8ab4f8;font-weight:bold",
 				"color:#ccc",
