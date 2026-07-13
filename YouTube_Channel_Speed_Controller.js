@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v36)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v37)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -173,9 +173,8 @@
 
 		if (!apiKey || !context) return null;
 
-		const fields =
-			"contents.twoColumnWatchNextResults.playlist.playlist.contents." +
-			"playlistPanelVideoRenderer.navigationEndpoint.watchEndpoint.playerParams";
+		const panelPath = "contents.twoColumnWatchNextResults.playlist.playlist.contents.playlistPanelVideoRenderer";
+		const fields    = `${panelPath}.videoId,${panelPath}.navigationEndpoint.watchEndpoint.playerParams`;
 
 		const endpoint =
 			"https://www.youtube.com/youtubei/v1/next" +
@@ -190,7 +189,7 @@
 		const controller = new AbortController();
 		mixAbortController = controller;
 
-		const timeoutId  = setTimeout(() => controller.abort(), MIX_CHECK_TIMEOUT_MS);
+		const timeoutId = setTimeout(() => controller.abort(), MIX_CHECK_TIMEOUT_MS);
 
 		try
 		{
@@ -205,16 +204,19 @@
 				}
 			);
 
+			if (!response.ok) return null;
+
 			const json     = await response.json();
 			const contents = json?.contents?.twoColumnWatchNextResults?.playlist?.playlist?.contents ?? [];
 
-			const playerParams = contents
-				.map(item => item?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams)
-				.find(params => typeof params === "string");
+			const playerParams = contents.find
+			(
+				item => item?.playlistPanelVideoRenderer?.videoId === videoId
+			)?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams;
 
-			if (!playerParams) return false;
-
-			return playerParams.startsWith(PLAYER_PARAMS_MUSIC_PREFIX);
+			return typeof playerParams === "string"
+				? playerParams.startsWith(PLAYER_PARAMS_MUSIC_PREFIX)
+				: false;
 		}
 		catch (error)
 		{
@@ -618,13 +620,11 @@
 			return matches;
 		},
 
-		checkMixIsMusic(videoId = getWatchVideoId())
+		async checkMixIsMusic(videoId = getWatchVideoId())
 		{
-			return checkMixIsMusic(videoId).then(isMusic =>
-			{
-				console.log("[EfYT-ChSpeed] Mix check result:", isMusic);
-				return isMusic;
-			});
+			const isMusic = await checkMixIsMusic(videoId);
+			console.log("[EfYT-ChSpeed] Mix check result:", isMusic);
+			return isMusic;
 		},
 
 		isMusicCategory()
