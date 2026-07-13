@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v40)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v41)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -14,6 +14,7 @@
 	// CONFIGURATION
 	// ============================================================
 	const DEFAULT_SPEED_FALLBACK = 2;
+	const MUSIC_SPEED_OVERRIDE = 1; // Force music to 1x. Set to null to disable music overrides entirely.
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
@@ -104,6 +105,7 @@
 	// ============================================================
 	const getMoviePlayer = () => document.getElementById("movie_player");
 	const fetchPlayerResponse = () => getMoviePlayer()?.getPlayerResponse();
+	const isWatchPage = () => location.pathname === "/watch";
 
 	function getEfytDefaultSpeed()
 	{
@@ -128,27 +130,20 @@
 
 	const fetchChannelId = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.channelId;
 
-	const fetchChannelName = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.author
+	const fetchChannelName = (playerResponse = fetchPlayerResponse()) => 
+		playerResponse?.videoDetails?.author
 		?? document.querySelector("ytd-channel-name yt-formatted-string, #owner ytd-channel-name a")?.textContent?.trim()
 		?? "Unknown Channel";
 
 	const textIncludesNormalized = (sourceText, targetText) => !!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
 
-	// Normalize SVG path representations to protect against browser spacing changes
 	const isArtistSvgPath = (d) =>
 	{
 		if (!d) return false;
 		const normalizedD = d.replace(/[\s,]+/g, " ").trim();
-		
-		// Match standard music note path prefixes
 		if (normalizedD.startsWith("M12 3v10") || normalizedD.startsWith("M12 3 v10")) return true;
-		
-		// Match scalloped badge outline path prefixes
 		if (normalizedD.startsWith("M9.03 2.24") || normalizedD.startsWith("M9.03 2.242")) return true;
-		
-		// Exact comparison fallback
 		if (normalizedD === ARTIST_BADGE_SVG_PATH.replace(/[\s,]+/g, " ").trim()) return true;
-		
 		return false;
 	};
 
@@ -157,8 +152,6 @@
 		const ownerContainer = element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
 		if (!ownerContainer) return false;
 
-		// If the badge is verified inside the main metadata block of the watch page, 
-		// it is associated with the active video. This skips string name comparison checks.
 		const isMainWatchOwner = !!element.closest("ytd-watch-metadata #owner, ytd-watch-metadata ytd-video-owner-renderer, ytd-video-primary-info-renderer #owner");
 		if (isMainWatchOwner) return true;
 
@@ -181,7 +174,8 @@
 		return false;
 	};
 
-	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.title
+	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => 
+		playerResponse?.videoDetails?.title
 		?? document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim()
 		?? "";
 	
@@ -202,7 +196,6 @@
 		if (playerResponse?.microformat?.playerMicroformatRenderer?.category?.toLowerCase() === "music") return true;
 		
 		const authorName = playerResponse?.videoDetails?.author;
-		
 		if (checkOfficialArtistChannel(authorName) || checkArtistBadgeSvg(authorName)) return true;
 		
 		const videoTitle = fetchVideoTitle(playerResponse);
@@ -363,6 +356,9 @@
 		}, SUPPRESS_RESET_MS);
 	}
 
+	// ============================================================
+	// EVENT DELEGATION & POLLING
+	// ============================================================
 	function clearPolling()
 	{
 		clearTimeout(state.timers.retry);
@@ -370,9 +366,6 @@
 		state.suppressSave = false;
 	}
 
-	// ============================================================
-	// EVENT DELEGATION & POLLING
-	// ============================================================
 	function onRateChange(event)
 	{
 		if (state.suppressSave || isAdPlaying()) return;
@@ -447,8 +440,11 @@
 
 			if (isMusicVideo)
 			{
-				log(`Music video detected — forcing 1x speed for ${activeChannelName}`);
-				applySpeedWithSuppress(1);
+				if (MUSIC_SPEED_OVERRIDE !== null)
+				{
+					log(`Music video detected — forcing ${MUSIC_SPEED_OVERRIDE}x speed for ${activeChannelName}`);
+					applySpeedWithSuppress(MUSIC_SPEED_OVERRIDE);
+				}
 				state.musicChecked = state.speedApplied = true;
 				clearPolling();
 			}
@@ -459,8 +455,11 @@
 				{
 					if (state.activeVideoId === activeVideoId && isMixMusic)
 					{
-						log(`Playlist Mix API confirmed Music — forcing 1x speed for ${activeChannelName}`);
-						applySpeedWithSuppress(1);
+						if (MUSIC_SPEED_OVERRIDE !== null)
+						{
+							log(`Playlist Mix API confirmed Music — forcing ${MUSIC_SPEED_OVERRIDE}x speed for ${activeChannelName}`);
+							applySpeedWithSuppress(MUSIC_SPEED_OVERRIDE);
+						}
 					}
 				});
 				state.musicChecked = true;
@@ -496,6 +495,14 @@
 
 	function onVideoNavigation()
 	{
+		if (!isWatchPage())
+		{
+			clearPolling();
+			state.activeVideoId = null;
+			state.abortMixCheck();
+			return;
+		}
+
 		const playerResponse = fetchPlayerResponse();
 		const currentVideoId = fetchWatchVideoId(playerResponse);
 		
@@ -518,6 +525,7 @@
 
 	function onVisibilityChange()
 	{
+		if (!isWatchPage()) return;
 		if (!document.hidden && (!state.speedApplied || !state.musicChecked))
 		{
 			log("Tab activated with unresolved state — re-arming polling.");
@@ -645,6 +653,40 @@
 			const channelKeys = fetchChannelKeys();
 			channelKeys.forEach(storageKey => localStorage.removeItem(storageKey));
 			log(`Cleared ${channelKeys.length} saved channel override(s).`);
+		},
+
+		list()
+		{
+			const channelKeys = fetchChannelKeys();
+			const tabularData = channelKeys.map(storageKey =>
+			{
+				try
+				{
+					const parsed = JSON.parse(localStorage.getItem(storageKey));
+					return {
+						"Channel ID": storageKey.slice(CH_PREFIX.length),
+						"Channel Name": parsed?.name || "Unknown",
+						"Speed Overrides": (parsed?.speed || 0) + "x"
+					};
+				}
+				catch
+				{
+					return {
+						"Channel ID": storageKey.slice(CH_PREFIX.length),
+						"Channel Name": "Unknown",
+						"Speed Overrides": localStorage.getItem(storageKey) + "x"
+					};
+				}
+			});
+
+			if (tabularData.length > 0)
+			{
+				console.table(tabularData);
+			}
+			else
+			{
+				log("No channel speed overrides currently configured.");
+			}
 		},
 
 		export()
@@ -782,8 +824,9 @@
   efytSpeed.clearAll()                     → remove all saved overrides
 
 %cData
-%c  efytSpeed.export()                       → log all overrides as JSON
-  efytSpeed.import()                       → show a button to pick a .json file to import
+%c  efytSpeed.list()                         → display all overrides in a table
+  efytSpeed.export()                       → log and download overrides as JSON
+  efytSpeed.import()                       → pick a .json file to import
 
 %cMisc
 %c  efytSpeed.refresh()                      → manually re-run detection now`,
