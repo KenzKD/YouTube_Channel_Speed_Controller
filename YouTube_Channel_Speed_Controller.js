@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v43)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v44)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -11,10 +11,10 @@
 	window.efytSpeedInitialized = true;
 
 	// ============================================================
-	// CONFIGURATION
+	// 1. CONFIGURATION & CONSTANTS
 	// ============================================================
 	const DEFAULT_SPEED_FALLBACK = 2;
-	const MUSIC_SPEED_OVERRIDE = 1; // Force music to 1x. Set to null to disable music overrides entirely.
+	const MUSIC_SPEED_OVERRIDE = 1; // Force music to 1x. Set to null to disable overrides.
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
@@ -23,24 +23,7 @@
 	const CH_PREFIX = "efyt_ch_speed::";
 	const LOG_PREFIX = "[EfYT-ChSpeed]";
 
-	// Helpers for logging
-	const log = (...args) => console.log(LOG_PREFIX, ...args);
-	const warn = (...args) => console.warn(LOG_PREFIX, ...args);
-	const err = (...args) => console.error(LOG_PREFIX, ...args);
-
-	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 005.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
-	
-	// English aria-labels, legacy classes, and modern structural classes
-	const BADGE_SELECTOR_COMBINED = [
-		'badge-shape[aria-label="Official Artist Channel"]',
-		'[aria-label="Official Artist Channel"]',
-		'.badge-style-type-verified-artist',
-		'badge-shape.yt-badge-shape--verified-artist',
-		'badge-shape[class*="verified-artist"]',
-		'.yt-badge-shape--verified-artist'
-	].join(', ');
-
-	const TITLE_SELECTOR_COMBINED = "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer";
+	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 000 5.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
 
 	const TITLE_KEYWORDS = [
 		"official audio", "official video", "music video", "mv", "official lyric video",
@@ -63,7 +46,32 @@
 	);
 
 	// ============================================================
-	// STATE MANAGEMENT
+	// 2. DOM SELECTOR REGISTRY
+	// ============================================================
+	const SELECTORS = {
+		moviePlayer: "movie_player",
+		videoElement: "video",
+		watchFlexy: "ytd-watch-flexy",
+		speedUpBtn: "efyt-speed-plus",
+		speedDownBtn: "efyt-speed-minus",
+		videoTitle: "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer",
+		channelName: "ytd-channel-name yt-formatted-string, #owner ytd-channel-name a",
+		ownerContainer: "#owner, ytd-video-owner-renderer, ytd-channel-name",
+		mainWatchOwner: "ytd-watch-metadata #owner, ytd-watch-metadata ytd-video-owner-renderer, ytd-video-primary-info-renderer #owner",
+		ownerPaths: "#owner path, ytd-channel-name path, ytd-video-owner-renderer path",
+		artistBadges: [
+			'badge-shape[aria-label="Official Artist Channel"]',
+			'[aria-label="Official Artist Channel"]',
+			'.badge-style-type-verified-artist',
+			'badge-shape.yt-badge-shape--verified-artist',
+			'badge-shape[class*="verified-artist"]',
+			'.yt-badge-shape--verified-artist'
+		].join(', '),
+		adContainers: ".ad-showing, .ad-interrupting"
+	};
+
+	// ============================================================
+	// 3. STATE MANAGEMENT
 	// ============================================================
 	const state =
 	{
@@ -101,41 +109,14 @@
 	};
 
 	// ============================================================
-	// HELPERS
+	// 4. LOW-LEVEL SYSTEM UTILITIES & LOGGING
 	// ============================================================
-	const getMoviePlayer = () => document.getElementById("movie_player");
-	const fetchPlayerResponse = () => getMoviePlayer()?.getPlayerResponse();
-	const isWatchPage = () => location.pathname === "/watch";
+	const log = (...args) => console.log(LOG_PREFIX, ...args);
+	const warn = (...args) => console.warn(LOG_PREFIX, ...args);
+	const err = (...args) => console.error(LOG_PREFIX, ...args);
 
-	function getEfytDefaultSpeed()
-	{
-		try
-		{
-			const parsedData = JSON.parse(localStorage.getItem(EFYT_KEY));
-			const defaultSpeed = parsedData?.speed;
-			return (defaultSpeed > 0) ? defaultSpeed : DEFAULT_SPEED_FALLBACK;
-		}
-		catch
-		{
-			return DEFAULT_SPEED_FALLBACK;
-		}
-	}
-
-	function fetchWatchVideoId(playerResponse = fetchPlayerResponse())
-	{
-		return playerResponse?.videoDetails?.videoId
-			?? location.search.match(/[?&]v=([^&#]+)/)?.[1]
-			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id");
-	}
-
-	const fetchChannelId = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.channelId;
-
-	const fetchChannelName = (playerResponse = fetchPlayerResponse()) => 
-		playerResponse?.videoDetails?.author
-		?? document.querySelector("ytd-channel-name yt-formatted-string, #owner ytd-channel-name a")?.textContent?.trim()
-		?? "Unknown Channel";
-
-	const textIncludesNormalized = (sourceText, targetText) => !!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
+	const textIncludesNormalized = (sourceText, targetText) => 
+		!!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
 
 	const isArtistSvgPath = (d) =>
 	{
@@ -147,12 +128,54 @@
 		return false;
 	};
 
+	// ============================================================
+	// 5. PLAYER DOM & API ACCESSORS
+	// ============================================================
+	const getMoviePlayer = () => document.getElementById(SELECTORS.moviePlayer);
+	const fetchPlayerResponse = () => getMoviePlayer()?.getPlayerResponse();
+	const isWatchPage = () => location.pathname === "/watch";
+
+	function fetchWatchVideoId(playerResponse = fetchPlayerResponse())
+	{
+		return playerResponse?.videoDetails?.videoId
+			?? location.search.match(/[?&]v=([^&#]+)/)?.[1]
+			?? document.querySelector(SELECTORS.watchFlexy)?.getAttribute("video-id");
+	}
+
+	const fetchChannelId = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.channelId;
+
+	const fetchChannelName = (playerResponse = fetchPlayerResponse()) => 
+		playerResponse?.videoDetails?.author
+		?? document.querySelector(SELECTORS.channelName)?.textContent?.trim()
+		?? "Unknown Channel";
+
+	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => 
+		playerResponse?.videoDetails?.title
+		?? document.querySelector(SELECTORS.videoTitle)?.textContent?.trim()
+		?? "";
+
+	const checkDomSettledForChannel = (expectedChannelName) => 
+		expectedChannelName ? textIncludesNormalized(document.querySelector(SELECTORS.ownerContainer)?.textContent, expectedChannelName) : false;
+
+	const isAdPlaying = () =>
+	{
+		const player = getMoviePlayer();
+		return !!(
+			player?.classList.contains("ad-showing") ||
+			player?.getAdState?.() > 0 ||
+			document.querySelector(SELECTORS.adContainers)
+		);
+	};
+
+	// ============================================================
+	// 6. MUSIC CLASSIFIER MODULE
+	// ============================================================
 	const containerMatchesChannel = (element, expectedChannelName) =>
 	{
-		const ownerContainer = element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
+		const ownerContainer = element.closest(SELECTORS.ownerContainer);
 		if (!ownerContainer) return false;
 
-		const isMainWatchOwner = !!element.closest("ytd-watch-metadata #owner, ytd-watch-metadata ytd-video-owner-renderer, ytd-video-primary-info-renderer #owner");
+		const isMainWatchOwner = !!element.closest(SELECTORS.mainWatchOwner);
 		if (isMainWatchOwner) return true;
 
 		if (!expectedChannelName || expectedChannelName === "Unknown Channel") return true;
@@ -162,7 +185,7 @@
 
 	const checkArtistBadgeSvg = (expectedChannelName) =>
 	{
-		const paths = document.querySelectorAll('#owner path, ytd-channel-name path, ytd-video-owner-renderer path');
+		const paths = document.querySelectorAll(SELECTORS.ownerPaths);
 		for (const path of paths)
 		{
 			const d = path.getAttribute("d");
@@ -174,16 +197,11 @@
 		return false;
 	};
 
-	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => 
-		playerResponse?.videoDetails?.title
-		?? document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim()
-		?? "";
-	
 	const checkTitleMatchesMusicKeyword = (videoTitle) => videoTitle ? TITLE_KEYWORDS_REGEX.test(videoTitle) : false;
 	
 	const checkOfficialArtistChannel = (expectedChannelName) =>
 	{
-		const badges = document.querySelectorAll(BADGE_SELECTOR_COMBINED);
+		const badges = document.querySelectorAll(SELECTORS.artistBadges);
 		for (const badge of badges)
 		{
 			if (containerMatchesChannel(badge, expectedChannelName)) return true;
@@ -201,18 +219,6 @@
 		const videoTitle = fetchVideoTitle(playerResponse);
 		return checkTitleMatchesMusicKeyword(videoTitle);
 	}
-
-	const checkDomSettledForChannel = (expectedChannelName) => expectedChannelName ? textIncludesNormalized(document.querySelector("#owner, ytd-channel-name")?.textContent, expectedChannelName) : false;
-	
-	const isAdPlaying = () =>
-	{
-		const player = getMoviePlayer();
-		return !!(
-			player?.classList.contains("ad-showing") ||
-			player?.getAdState?.() > 0 ||
-			document.querySelector(".ad-showing, .ad-interrupting")
-		);
-	};
 
 	async function verifyMixIsMusic(videoId)
 	{
@@ -263,9 +269,23 @@
 	}
 
 	// ============================================================
-	// STORAGE & CONTROLS
+	// 7. STORAGE PERSISTENCE ENGINE
 	// ============================================================
 	const fetchChannelKeys = () => Object.keys(localStorage).filter(storageKey => storageKey.startsWith(CH_PREFIX));
+
+	function getEfytDefaultSpeed()
+	{
+		try
+		{
+			const parsedData = JSON.parse(localStorage.getItem(EFYT_KEY));
+			const defaultSpeed = parsedData?.speed;
+			return (defaultSpeed > 0) ? defaultSpeed : DEFAULT_SPEED_FALLBACK;
+		}
+		catch
+		{
+			return DEFAULT_SPEED_FALLBACK;
+		}
+	}
 
 	function loadChannelSpeed(channelId)
 	{
@@ -308,13 +328,16 @@
 		}
 	}
 
+	// ============================================================
+	// 8. SPEED CONTROLLER ENGINE
+	// ============================================================
 	function stepToSpeed(targetPlaybackRate)
 	{
-		const videoElement = document.querySelector("video");
+		const videoElement = document.querySelector(SELECTORS.videoElement);
 		if (!videoElement) return false;
 
-		const speedUpButton = document.getElementById("efyt-speed-plus");
-		const speedDownButton = document.getElementById("efyt-speed-minus");
+		const speedUpButton = document.getElementById(SELECTORS.speedUpBtn);
+		const speedDownButton = document.getElementById(SELECTORS.speedDownBtn);
 
 		if (speedUpButton && speedDownButton)
 		{
@@ -358,6 +381,9 @@
 		}, SUPPRESS_RESET_MS);
 	}
 
+	// ============================================================
+	// 9. IMPORT, EXPORT & DISPLAY PANEL CONTROLS
+	// ============================================================
 	function listChannelSpeeds()
 	{
 		const channelKeys = fetchChannelKeys();
@@ -502,39 +528,13 @@
 	}
 
 	// ============================================================
-	// EVENT DELEGATION & POLLING
+	// 10. PAGE POLLING & PROCESS EVALUATION
 	// ============================================================
 	function clearPolling()
 	{
 		clearTimeout(state.timers.retry);
 		clearTimeout(state.timers.cutoff);
 		state.suppressSave = false;
-	}
-
-	function onRateChange(event)
-	{
-		if (state.suppressSave || isAdPlaying()) return;
-		
-		const videoElement = event.target;
-		if (videoElement.tagName !== "VIDEO" || !videoElement.closest("#movie_player")) return;
-
-		const playerResponse = fetchPlayerResponse();
-		const activeVideoId = fetchWatchVideoId(playerResponse);
-		if (!activeVideoId || activeVideoId !== state.activeVideoId) return;
-
-		if (isMusicCategory(playerResponse)) return;
-
-		const targetChannelId = state.lastChannelId || fetchChannelId(playerResponse);
-		
-		if (targetChannelId)
-		{
-			const storedChannelSpeed = loadChannelSpeed(targetChannelId) ?? getEfytDefaultSpeed();
-			if (Math.abs(videoElement.playbackRate - storedChannelSpeed) >= 0.001)
-			{
-				const activeChannelName = state.lastChannelName || fetchChannelName(playerResponse);
-				saveChannelSpeed(targetChannelId, videoElement.playbackRate, activeChannelName);
-			}
-		}
 	}
 
 	function evaluateCurrentPage()
@@ -556,20 +556,20 @@
 			state.suppressSave = true;
 		}
 
-		const videoElement = getMoviePlayer()?.querySelector("video") || document.querySelector("video");
+		const videoElement = getMoviePlayer()?.querySelector(SELECTORS.videoElement) || document.querySelector(SELECTORS.videoElement);
 		
-		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById("efyt-speed-plus")) return;
+		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById(SELECTORS.speedUpBtn)) return;
 
-		// 1. Safety Checks (Ad and Readiness)
-		// Yield executing speed adjustments if an ad is playing or video media metadata/buffer isn't active (readyState < 2)
+		// --- AD & MEDIA READY GATE SAFETY COVERS ---
+		// Postpone the safety cutoff timer and return early if media state is unsafe
 		if (isAdPlaying() || videoElement.readyState < 2)
 		{
 			clearTimeout(state.timers.cutoff);
-			state.timers.cutoff = setTimeout(clearPolling, 5000); // Postpone safety cutoff
+			state.timers.cutoff = setTimeout(clearPolling, 5000);
 			return;
 		}
 
-		// 2. Channel Speed
+		// Channel Speed Application
 		if (!state.speedApplied)
 		{
 			const channelId = fetchChannelId(playerResponse);
@@ -586,7 +586,7 @@
 			}
 		}
 
-		// 3. Music Check Override
+		// Music Categorization Analysis
 		if (!state.musicChecked)
 		{
 			const isMusicVideo = isMusicCategory(playerResponse);
@@ -647,6 +647,35 @@
 		state.timers.cutoff = setTimeout(clearPolling, 5000);
 	}
 
+	// ============================================================
+	// 11. NAVIGATION & EVENT DISPATCHERS
+	// ============================================================
+	function onRateChange(event)
+	{
+		if (state.suppressSave || isAdPlaying()) return;
+		
+		const videoElement = event.target;
+		if (videoElement.tagName !== "VIDEO" || !videoElement.closest("#" + SELECTORS.moviePlayer)) return;
+
+		const playerResponse = fetchPlayerResponse();
+		const activeVideoId = fetchWatchVideoId(playerResponse);
+		if (!activeVideoId || activeVideoId !== state.activeVideoId) return;
+
+		if (isMusicCategory(playerResponse)) return;
+
+		const targetChannelId = state.lastChannelId || fetchChannelId(playerResponse);
+		
+		if (targetChannelId)
+		{
+			const storedChannelSpeed = loadChannelSpeed(targetChannelId) ?? getEfytDefaultSpeed();
+			if (Math.abs(videoElement.playbackRate - storedChannelSpeed) >= 0.001)
+			{
+				const activeChannelName = state.lastChannelName || fetchChannelName(playerResponse);
+				saveChannelSpeed(targetChannelId, videoElement.playbackRate, activeChannelName);
+			}
+		}
+	}
+
 	function onVideoNavigation()
 	{
 		if (!isWatchPage())
@@ -688,6 +717,7 @@
 		}
 	}
 
+	// Event Setup hooks
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
 	window.addEventListener("yt-page-data-updated", onVideoNavigation);
 	window.addEventListener("ratechange", onRateChange, true);
@@ -695,7 +725,7 @@
 	onVideoNavigation();
 
 	// ============================================================
-	// PUBLIC API
+	// 12. EXPOSED PUBLIC DIAGNOSTIC API
 	// ============================================================
 	window.efytSpeed =
 	{
