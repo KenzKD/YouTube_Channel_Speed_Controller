@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v37)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v38)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -7,32 +7,32 @@
 {
 	"use strict";
 
-	// Prevent duplicate instances if the script is injected multiple times
 	if (window.efytSpeedInitialized) return;
 	window.efytSpeedInitialized = true;
 
 	// ============================================================
-	// CONFIGURATION FALLBACK
-	// Under Chromium Browsers, the extension settings are isolated.
-	// Adjust this variable to match the global default speed you 
-	// have configured in your extension options (e.g., 2 for 2x).
+	// CONFIGURATION
 	// ============================================================
-	const DEFAULT_SPEED_FALLBACK = 2; 
+	const DEFAULT_SPEED_FALLBACK = 2;
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
-	const CH_PREFIX         = "efyt_ch_speed::";
-	
-	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 005.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
+	const CH_PREFIX = "efyt_ch_speed::";
+	const LOG_PREFIX = "[EfYT-ChSpeed]";
 
+	// Helpers for logging
+	const log = (...args) => console.log(LOG_PREFIX, ...args);
+	const warn = (...args) => console.warn(LOG_PREFIX, ...args);
+	const err = (...args) => console.error(LOG_PREFIX, ...args);
+
+	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 005.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
 	const BADGE_SELECTOR_COMBINED = 'badge-shape[aria-label="Official Artist Channel"], [aria-label="Official Artist Channel"]';
 	const TITLE_SELECTOR_COMBINED = "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer";
 
-	const TITLE_KEYWORDS =
-	[
-		"official audio", "official video", "music video", "mv", "official lyric video", 
+	const TITLE_KEYWORDS = [
+		"official audio", "official video", "music video", "mv", "official lyric video",
 		"official visualizer", "lyric video", "lyrics", "audio only", "visualizer",
 		"dance video", "dance cover", "dance practice", "choreography", "choreo",
 		"acoustic cover", "remix", "mashup", "type beat",
@@ -43,38 +43,65 @@
 		"full album", "album stream", "sfx", "sound effect",
 	];
 
-	// Compile keywords into a single case-insensitive RegExp
 	const TITLE_KEYWORDS_REGEX = new RegExp(
-		TITLE_KEYWORDS.map(kw => {
-			const escaped = kw.replace(/[\/\\^$*+?.()|[\]{}]/g, "\\$&").replace(/\s+/g, "\\s+");
-			return (kw === "mv" || kw === "sfx") ? `\\b${escaped}\\b` : escaped;
-		}).join("|"),
-		"i"
+		TITLE_KEYWORDS.map(keyword =>
+		{
+			const escapedKeyword = keyword.replace(/[\/\\^$*+?.()|[\]{}]/g, "\\$&").replace(/\s+/g, "\\s+");
+			return (keyword === "mv" || keyword === "sfx") ? `\\b${escapedKeyword}\\b` : escapedKeyword;
+		}).join("|"), "i"
 	);
 
-	// State Tracking
-	let suppressSave       = false;
-	let suppressTimeoutId  = null;
-	let lastChannelId      = null;
-	let lastChannelName    = null;
-	let activeVideoId      = null;
-	let speedApplied       = false;
-	let musicChecked       = false;
-	let retryTimeoutId     = null;
-	let cutoffTimeoutId    = null;
-	let mixAbortController = null;
+	// ============================================================
+	// STATE MANAGEMENT
+	// ============================================================
+	const state =
+	{
+		suppressSave: false,
+		activeVideoId: null,
+		lastChannelId: null,
+		lastChannelName: null,
+		speedApplied: false,
+		musicChecked: false,
+		mixAbortController: null,
+		timers:
+		{
+			suppress: null,
+			retry: null,
+			cutoff: null
+		},
 
-	// -----------------------------------------------------------
-	// Helpers
-	// -----------------------------------------------------------
+		resetSession()
+		{
+			this.activeVideoId = null;
+			this.lastChannelId = null;
+			this.lastChannelName = null;
+			this.speedApplied = false;
+			this.musicChecked = false;
+		},
+
+		abortMixCheck()
+		{
+			if (this.mixAbortController)
+			{
+				this.mixAbortController.abort();
+				this.mixAbortController = null;
+			}
+		}
+	};
+
+	// ============================================================
+	// HELPERS
+	// ============================================================
+	const getMoviePlayer = () => document.getElementById("movie_player");
+	const fetchPlayerResponse = () => getMoviePlayer()?.getPlayerResponse();
 
 	function getEfytDefaultSpeed()
 	{
 		try
 		{
-			const raw = localStorage.getItem(EFYT_KEY);
-			const speed = raw ? JSON.parse(raw)?.speed : null;
-			return (speed !== null && speed !== undefined && speed > 0) ? speed : DEFAULT_SPEED_FALLBACK;
+			const parsedData = JSON.parse(localStorage.getItem(EFYT_KEY));
+			const defaultSpeed = parsedData?.speed;
+			return (defaultSpeed > 0) ? defaultSpeed : DEFAULT_SPEED_FALLBACK;
 		}
 		catch
 		{
@@ -82,650 +109,515 @@
 		}
 	}
 
-	function getWatchVideoId()
+	function fetchWatchVideoId()
 	{
-		const match = location.search.match(/[?&]v=([^&#]+)/);
-		return (match ? match[1] : null)
+		const playerResponse = fetchPlayerResponse();
+		
+		return location.search.match(/[?&]v=([^&#]+)/)?.[1]
 			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
-			?? document.getElementById("movie_player")?.getPlayerResponse?.()?.videoDetails?.videoId;
+			?? playerResponse?.videoDetails?.videoId;
 	}
 
-	function getChannelId(pr)
+	const fetchChannelId = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.channelId;
+
+	const fetchChannelName = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.author
+		?? document.querySelector("ytd-channel-name yt-formatted-string, #owner ytd-channel-name a")?.textContent?.trim()
+		?? "Unknown Channel";
+
+	const textIncludesNormalized = (sourceText, targetText) => !!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
+
+	const containerMatchesChannel = (element, expectedChannelName) => !expectedChannelName || textIncludesNormalized(element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name")?.textContent, expectedChannelName);
+
+	const checkArtistBadgeSvg = (expectedChannelName) =>
 	{
-		return pr?.videoDetails?.channelId;
-	}
+		const svgPathElement = document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`);
+		return svgPathElement ? containerMatchesChannel(svgPathElement, expectedChannelName) : false;
+	};
 
-	function getChannelName(pr)
+	const fetchVideoTitle = () => document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim() ?? "";
+	
+	const checkTitleMatchesMusicKeyword = (videoTitle) => videoTitle ? TITLE_KEYWORDS_REGEX.test(videoTitle) : false;
+	
+	const checkOfficialArtistChannel = (expectedChannelName) =>
 	{
-		return pr?.videoDetails?.author 
-			?? document.querySelector("ytd-channel-name yt-formatted-string, #owner ytd-channel-name a")?.textContent?.trim() 
-			?? "Unknown Channel";
-	}
+		const badgeElement = document.querySelector(BADGE_SELECTOR_COMBINED);
+		return badgeElement ? containerMatchesChannel(badgeElement, expectedChannelName) : false;
+	};
 
-	function textIncludesNormalized(sourceText, targetText)
+	function isMusicCategory(playerResponse = fetchPlayerResponse())
 	{
-		if (!sourceText || !targetText) return false;
-		const normalize = str => str.toLowerCase().replace(/\s+/g, " ").trim();
-		return normalize(sourceText).includes(normalize(targetText));
+		if (playerResponse?.microformat?.playerMicroformatRenderer?.category?.toLowerCase() === "music") return true;
+		
+		const authorName = playerResponse?.videoDetails?.author;
+		
+		if (checkOfficialArtistChannel(authorName) || checkArtistBadgeSvg(authorName)) return true;
+		
+		const videoTitle = playerResponse?.videoDetails?.title || fetchVideoTitle();
+		return checkTitleMatchesMusicKeyword(videoTitle);
 	}
 
-	function containerMatchesChannel(element, expectedChannelName)
-	{
-		if (!expectedChannelName) return true;
-		const container = element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
-		return container ? textIncludesNormalized(container.textContent, expectedChannelName) : true;
-	}
+	const checkDomSettledForChannel = (expectedChannelName) => expectedChannelName ? textIncludesNormalized(document.querySelector("#owner, ytd-channel-name")?.textContent, expectedChannelName) : false;
+	
+	const isAdPlaying = () => !!document.querySelector(".ad-showing, .ad-interrupting, .html5-video-player.ad-showing");
 
-	function hasArtistBadgeSvg(expectedChannelName)
-	{
-		const svgPath = document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`);
-		return svgPath ? containerMatchesChannel(svgPath, expectedChannelName) : false;
-	}
-
-	function getVideoTitle()
-	{
-		return document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim() ?? "";
-	}
-
-	function titleMatchesMusicKeyword(title)
-	{
-		return title ? TITLE_KEYWORDS_REGEX.test(title) : false;
-	}
-
-	function isOfficialArtistChannel(expectedChannelName)
-	{
-		const badge = document.querySelector(BADGE_SELECTOR_COMBINED);
-		return badge ? containerMatchesChannel(badge, expectedChannelName) : false;
-	}
-
-	function isMusicCategory(pr)
-	{
-		const category = pr?.microformat?.playerMicroformatRenderer?.category;
-		if (category && category.toLowerCase() === "music") return true;
-
-		const expectedChannelName = pr?.videoDetails?.author;
-
-		if (isOfficialArtistChannel(expectedChannelName)) return true;
-		if (hasArtistBadgeSvg(expectedChannelName)) return true;
-
-		const title = pr?.videoDetails?.title || getVideoTitle();
-		return titleMatchesMusicKeyword(title);
-	}
-
-	function isDomSettledForChannel(expectedChannelName)
-	{
-		if (!expectedChannelName) return false;
-		const ownerEl = document.querySelector("#owner, ytd-channel-name");
-		return ownerEl ? textIncludesNormalized(ownerEl.textContent, expectedChannelName) : false;
-	}
-
-	function isAdPlaying()
-	{
-		return document.querySelector(".ad-showing, .ad-interrupting, .html5-video-player.ad-showing") !== null;
-	}
-
-	async function checkMixIsMusic(videoId)
+	async function verifyMixIsMusic(videoId)
 	{
 		if (!videoId || !window.ytcfg?.get) return null;
+		
+		const innerTubeApiKey = window.ytcfg.get("INNERTUBE_API_KEY");
+		const innerTubeContext = window.ytcfg.get("INNERTUBE_CONTEXT");
+		
+		if (!innerTubeApiKey || !innerTubeContext) return null;
 
-		const apiKey  = window.ytcfg.get("INNERTUBE_API_KEY");
-		const context = window.ytcfg.get("INNERTUBE_CONTEXT");
+		const playlistPanelPath = "contents.twoColumnWatchNextResults.playlist.playlist.contents.playlistPanelVideoRenderer";
+		const apiEndpoint = `https://www.youtube.com/youtubei/v1/next?fields=${encodeURIComponent(`${playlistPanelPath}.videoId,${playlistPanelPath}.navigationEndpoint.watchEndpoint.playerParams`)}&prettyPrint=false&key=${innerTubeApiKey}`;
 
-		if (!apiKey || !context) return null;
-
-		const panelPath = "contents.twoColumnWatchNextResults.playlist.playlist.contents.playlistPanelVideoRenderer";
-		const fields    = `${panelPath}.videoId,${panelPath}.navigationEndpoint.watchEndpoint.playerParams`;
-
-		const endpoint =
-			"https://www.youtube.com/youtubei/v1/next" +
-			"?fields=" + encodeURIComponent(fields) +
-			"&prettyPrint=false" +
-			"&key=" + apiKey;
-
-		if (mixAbortController)
-		{
-			mixAbortController.abort();
-		}
-		const controller = new AbortController();
-		mixAbortController = controller;
-
-		const timeoutId = setTimeout(() => controller.abort(), MIX_CHECK_TIMEOUT_MS);
+		state.abortMixCheck();
+		const abortController = new AbortController();
+		state.mixAbortController = abortController;
+		
+		const fetchTimeoutId = setTimeout(() => abortController.abort(), MIX_CHECK_TIMEOUT_MS);
 
 		try
 		{
-			const response = await fetch
-			(
-				endpoint,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ context, videoId, playlistId: "RD" + videoId }),
-					signal: controller.signal,
-				}
-			);
+			const networkResponse = await fetch(apiEndpoint,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ context: innerTubeContext, videoId, playlistId: "RD" + videoId }),
+				signal: abortController.signal,
+			});
 
-			if (!response.ok) return null;
+			if (!networkResponse.ok) return null;
+			
+			const responseData = await networkResponse.json();
+			const playlistContents = responseData?.contents?.twoColumnWatchNextResults?.playlist?.playlist?.contents ?? [];
+			
+			const activeVideoData = playlistContents.find(playlistItem => playlistItem?.playlistPanelVideoRenderer?.videoId === videoId);
+			const playerParameters = activeVideoData?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams;
 
-			const json     = await response.json();
-			const contents = json?.contents?.twoColumnWatchNextResults?.playlist?.playlist?.contents ?? [];
-
-			const playerParams = contents.find
-			(
-				item => item?.playlistPanelVideoRenderer?.videoId === videoId
-			)?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams;
-
-			return typeof playerParams === "string"
-				? playerParams.startsWith(PLAYER_PARAMS_MUSIC_PREFIX)
-				: false;
+			return typeof playerParameters === "string" ? playerParameters.startsWith(PLAYER_PARAMS_MUSIC_PREFIX) : false;
 		}
-		catch (error)
+		catch
 		{
 			return null;
 		}
 		finally
 		{
-			clearTimeout(timeoutId);
-			if (mixAbortController === controller)
-			{
-				mixAbortController = null;
-			}
+			clearTimeout(fetchTimeoutId);
+			if (state.mixAbortController === abortController) state.mixAbortController = null;
 		}
 	}
 
-	function loadChannelSpeed(id)
+	function loadChannelSpeed(channelId)
 	{
-		if (!id) return null;
+		if (!channelId) return null;
 		try
 		{
-			const raw = localStorage.getItem(CH_PREFIX + id);
-			if (!raw) return null;
-			const data = JSON.parse(raw);
-			return data?.speed > 0 ? data.speed : null;
+			const storedData = JSON.parse(localStorage.getItem(CH_PREFIX + channelId));
+			const channelSpeed = storedData?.speed;
+			return channelSpeed > 0 ? channelSpeed : null;
 		}
-		catch (_)
+		catch
 		{
 			return null;
 		}
 	}
 
-	function saveChannelSpeed(id, speed, channelName)
+	function saveChannelSpeed(channelId, targetSpeed, channelName)
 	{
-		if (!id) return;
-		const def = getEfytDefaultSpeed();
-		const resolvedName = channelName || id;
+		if (!channelId) return;
+		
+		const defaultEfytSpeed = getEfytDefaultSpeed();
+		const resolvedChannelName = channelName || channelId;
 
 		try
 		{
-			if (Math.abs(speed - def) < 0.001)
+			if (Math.abs(targetSpeed - defaultEfytSpeed) < 0.001)
 			{
-				localStorage.removeItem(CH_PREFIX + id);
-				console.log(`[EfYT-ChSpeed] Cleared override for ${resolvedName} (matches default ${def}x)`);
+				localStorage.removeItem(CH_PREFIX + channelId);
+				log(`Cleared override for ${resolvedChannelName} (matches default ${defaultEfytSpeed}x)`);
 			}
 			else
 			{
-				const payload =
-				{
-					speed: speed,
-					name: channelName || "Unknown Channel"
-				};
-				localStorage.setItem(CH_PREFIX + id, JSON.stringify(payload));
-				console.log(`[EfYT-ChSpeed] Saved ${speed}x for ${resolvedName}`);
+				localStorage.setItem(CH_PREFIX + channelId, JSON.stringify({ speed: targetSpeed, name: channelName || "Unknown Channel" }));
+				log(`Saved ${targetSpeed}x for ${resolvedChannelName}`);
 			}
 		}
-		catch (error)
+		catch (storageError)
 		{
-			console.warn(`[EfYT-ChSpeed] Could not persist speed for ${resolvedName}:`, error);
+			warn(`Could not persist speed for ${resolvedChannelName}:`, storageError);
 		}
 	}
 
-	// -----------------------------------------------------------
-	// Programmatic Speed Shifting
-	// -----------------------------------------------------------
-
-	function stepToSpeed(target)
+	function stepToSpeed(targetPlaybackRate)
 	{
-		const v = document.querySelector("video");
-		if (!v) return false;
+		const videoElement = document.querySelector("video");
+		if (!videoElement) return false;
 
-		const plus  = document.getElementById("efyt-speed-plus");
-		const minus = document.getElementById("efyt-speed-minus");
+		const speedUpButton = document.getElementById("efyt-speed-plus");
+		const speedDownButton = document.getElementById("efyt-speed-minus");
 
-		if (plus && minus)
+		if (speedUpButton && speedDownButton)
 		{
-			const MAX_CLICKS = 30;
-			let guard = 0;
-
-			while (Math.abs(v.playbackRate - target) > 0.001 && guard++ < MAX_CLICKS)
+			let attemptCount = 0;
+			while (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001 && attemptCount++ < 30)
 			{
-				const before = v.playbackRate;
-				(target > before ? plus : minus).click();
-
-				if (v.playbackRate === before) break;
+				const previousPlaybackRate = videoElement.playbackRate;
+				
+				if (targetPlaybackRate > previousPlaybackRate)
+				{
+					speedUpButton.click();
+				}
+				else
+				{
+					speedDownButton.click();
+				}
+				
+				if (videoElement.playbackRate === previousPlaybackRate) break;
 			}
 		}
 
-		if (Math.abs(v.playbackRate - target) > 0.001)
+		if (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001)
 		{
-			v.playbackRate = target;
-			console.log(`[EfYT-ChSpeed] PlaybackRate set directly to ${target}x (UI controls unavailable)`);
+			videoElement.playbackRate = targetPlaybackRate;
+			log(`PlaybackRate set directly to ${targetPlaybackRate}x (UI controls unavailable)`);
 		}
-
-		return Math.abs(v.playbackRate - target) < 0.001;
+		
+		return Math.abs(videoElement.playbackRate - targetPlaybackRate) < 0.001;
 	}
 
-	function applySpeedWithSuppress(target)
+	function applySpeedWithSuppress(targetPlaybackRate)
 	{
-		suppressSave = true;
-		if (suppressTimeoutId) clearTimeout(suppressTimeoutId);
-
-		stepToSpeed(target);
-
-		suppressTimeoutId = setTimeout(() =>
-		{
-			suppressSave = false;
-			suppressTimeoutId = null;
+		state.suppressSave = true;
+		clearTimeout(state.timers.suppress);
+		
+		stepToSpeed(targetPlaybackRate);
+		
+		state.timers.suppress = setTimeout(() => 
+		{ 
+			state.suppressSave = false; 
 		}, SUPPRESS_RESET_MS);
 	}
 
-	// -----------------------------------------------------------
-	// Captured Event Delegation
-	// -----------------------------------------------------------
-
-	function onRateChange(e)
+	function clearPolling()
 	{
-		if (suppressSave || isAdPlaying()) return;
+		clearTimeout(state.timers.retry);
+		clearTimeout(state.timers.cutoff);
+		state.suppressSave = false;
+	}
 
-		const v = e.target;
-		if (v.tagName !== "VIDEO" || !v.closest("#movie_player")) return;
+	// ============================================================
+	// EVENT DELEGATION & POLLING
+	// ============================================================
+	function onRateChange(event)
+	{
+		if (state.suppressSave || isAdPlaying()) return;
+		
+		const videoElement = event.target;
+		if (videoElement.tagName !== "VIDEO" || !videoElement.closest("#movie_player")) return;
 
-		const videoId = getWatchVideoId();
-		if (!videoId || videoId !== activeVideoId) return;
+		const activeVideoId = fetchWatchVideoId();
+		if (!activeVideoId || activeVideoId !== state.activeVideoId) return;
 
-		const pr = document.getElementById("movie_player")?.getPlayerResponse();
-		if (isMusicCategory(pr)) return;
+		const playerResponse = fetchPlayerResponse();
+		if (isMusicCategory(playerResponse)) return;
 
-		const id = lastChannelId || getChannelId(pr);
-		const name = lastChannelName || getChannelName(pr);
-
-		if (id)
+		const targetChannelId = state.lastChannelId || fetchChannelId(playerResponse);
+		
+		if (targetChannelId)
 		{
-			const savedSpeed = loadChannelSpeed(id) ?? getEfytDefaultSpeed();
-			if (Math.abs(v.playbackRate - savedSpeed) < 0.001) return;
-
-			saveChannelSpeed(id, v.playbackRate, name);
+			const storedChannelSpeed = loadChannelSpeed(targetChannelId) ?? getEfytDefaultSpeed();
+			if (Math.abs(videoElement.playbackRate - storedChannelSpeed) >= 0.001)
+			{
+				const activeChannelName = state.lastChannelName || fetchChannelName(playerResponse);
+				saveChannelSpeed(targetChannelId, videoElement.playbackRate, activeChannelName);
+			}
 		}
 	}
 
-	// -----------------------------------------------------------
-	// Polling Page Evaluation Core
-	// -----------------------------------------------------------
-
 	function evaluateCurrentPage()
 	{
-		const videoId = getWatchVideoId();
-		if (!videoId)
+		const activeVideoId = fetchWatchVideoId();
+		
+		if (!activeVideoId)
 		{
-			if (activeVideoId !== null)
-			{
-				activeVideoId   = null;
-				lastChannelId   = null;
-				lastChannelName = null;
-				speedApplied    = false;
-				musicChecked    = false;
-			}
+			if (state.activeVideoId !== null) state.resetSession();
 			return;
 		}
 
-		if (activeVideoId !== videoId)
+		if (state.activeVideoId !== activeVideoId)
 		{
-			console.log(`[EfYT-ChSpeed] Evaluating video session: ${videoId}`);
-			activeVideoId       = videoId;
-			lastChannelId       = null;
-			lastChannelName     = null;
-			speedApplied        = false;
-			musicChecked        = false;
-			suppressSave        = true;
+			log(`Evaluating video session: ${activeVideoId}`);
+			state.resetSession();
+			state.activeVideoId = activeVideoId;
+			state.suppressSave = true;
 		}
 
-		const playerEl = document.getElementById("movie_player");
-		const videoEl = playerEl?.querySelector("video") || document.querySelector("video");
-		const pr = playerEl?.getPlayerResponse?.();
+		const playerResponse = fetchPlayerResponse();
+		const videoElement = getMoviePlayer()?.querySelector("video") || document.querySelector("video");
+		
+		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById("efyt-speed-plus")) return;
 
-		if (!videoEl || !playerEl || !pr || pr.videoDetails?.videoId !== videoId) return;
-
-		const hasButtons = document.getElementById("efyt-speed-plus") && document.getElementById("efyt-speed-minus");
-		if (!hasButtons) return;
-
-		// 1. Resolve and apply recorded channel speed
-		if (!speedApplied)
+		// 1. Channel Speed
+		if (!state.speedApplied)
 		{
-			const channelId = getChannelId(pr);
-			const channelName = getChannelName(pr);
+			const channelId = fetchChannelId(playerResponse);
 			if (channelId)
 			{
-				lastChannelId   = channelId;
-				lastChannelName = channelName;
-				const speed     = loadChannelSpeed(channelId) ?? getEfytDefaultSpeed();
+				state.lastChannelId = channelId;
+				state.lastChannelName = fetchChannelName(playerResponse);
 				
-				console.log(`[EfYT-ChSpeed] Applying speed ${speed}x for ${channelName}`);
-				applySpeedWithSuppress(speed);
-				speedApplied = true;
+				const targetSpeed = loadChannelSpeed(channelId) ?? getEfytDefaultSpeed();
+				
+				log(`Applying speed ${targetSpeed}x for ${state.lastChannelName}`);
+				applySpeedWithSuppress(targetSpeed);
+				state.speedApplied = true;
 			}
 		}
 
-		// 2. Resolve and apply forced 1x music speed
-		if (!musicChecked)
+		// 2. Music Check Override
+		if (!state.musicChecked)
 		{
-			const isMusic = isMusicCategory(pr);
-			const channelName = lastChannelName || getChannelName(pr);
-			const domSettled = isDomSettledForChannel(channelName);
+			const isMusicVideo = isMusicCategory(playerResponse);
+			const activeChannelName = state.lastChannelName || fetchChannelName(playerResponse);
 
-			if (isMusic)
+			if (isMusicVideo)
 			{
-				console.log(`[EfYT-ChSpeed] Music video detected — forcing 1x speed for ${channelName}`);
+				log(`Music video detected — forcing 1x speed for ${activeChannelName}`);
 				applySpeedWithSuppress(1);
-				musicChecked = true;
-				speedApplied = true; 
+				state.musicChecked = state.speedApplied = true;
 				clearPolling();
 			}
-			else if (domSettled && speedApplied)
+			else if (checkDomSettledForChannel(activeChannelName) && state.speedApplied)
 			{
-				console.log(`[EfYT-ChSpeed] DOM structure settled for ${channelName}. Running non-music configurations.`);
-
-				checkMixIsMusic(videoId).then(isMixMusic =>
+				log(`DOM settled for ${activeChannelName}. Running non-music configs.`);
+				verifyMixIsMusic(activeVideoId).then(isMixMusic =>
 				{
-					if (activeVideoId !== videoId) return;
-					if (isMixMusic)
+					if (state.activeVideoId === activeVideoId && isMixMusic)
 					{
-						console.log(`[EfYT-ChSpeed] Playlist Mix API confirmed Music — forcing 1x speed for ${channelName}`);
+						log(`Playlist Mix API confirmed Music — forcing 1x speed for ${activeChannelName}`);
 						applySpeedWithSuppress(1);
 					}
 				});
-
-				musicChecked = true;
+				state.musicChecked = true;
 				clearPolling();
 			}
 		}
 
-		if (speedApplied && musicChecked)
-		{
-			clearPolling();
-		}
+		if (state.speedApplied && state.musicChecked) clearPolling();
 	}
 
 	function setupPolling()
 	{
 		clearPolling();
-		suppressSave = true;
+		state.suppressSave = true;
 
-		function poll()
+		const pollForElements = () =>
 		{
 			if (document.hidden)
 			{
-				retryTimeoutId = setTimeout(poll, 1000);
+				state.timers.retry = setTimeout(pollForElements, 1000);
 				return;
 			}
-
 			evaluateCurrentPage();
-			if (!speedApplied || !musicChecked)
+			if (!state.speedApplied || !state.musicChecked)
 			{
-				retryTimeoutId = setTimeout(poll, 150);
+				state.timers.retry = setTimeout(pollForElements, 150);
 			}
-		}
-		poll();
+		};
 
-		cutoffTimeoutId = setTimeout(() =>
-		{
-			clearPolling();
-		}, 5000);
-	}
-
-	function clearPolling()
-	{
-		if (retryTimeoutId)
-		{
-			clearTimeout(retryTimeoutId);
-			retryTimeoutId = null;
-		}
-		if (cutoffTimeoutId)
-		{
-			clearTimeout(cutoffTimeoutId);
-			cutoffTimeoutId = null;
-		}
-		suppressSave = false;
+		pollForElements();
+		state.timers.cutoff = setTimeout(clearPolling, 5000);
 	}
 
 	function onVideoNavigation()
 	{
-		const videoId = getWatchVideoId();
-		if (!videoId)
+		const currentVideoId = fetchWatchVideoId();
+		
+		if (!currentVideoId)
 		{
 			clearPolling();
-			activeVideoId = null;
-			if (mixAbortController)
-			{
-				mixAbortController.abort();
-				mixAbortController = null;
-			}
+			state.activeVideoId = null;
+			state.abortMixCheck();
 			return;
 		}
 
-		if (activeVideoId === videoId)
-		{
-			return;
-		}
+		if (state.activeVideoId === currentVideoId) return;
 
-		console.log(`[EfYT-ChSpeed] New video navigation: ${videoId}`);
-		activeVideoId       = videoId;
-		lastChannelId       = null;
-		lastChannelName     = null;
-		speedApplied        = false;
-		musicChecked        = false;
-
-		if (mixAbortController)
-		{
-			mixAbortController.abort();
-			mixAbortController = null;
-		}
-
+		log(`New video navigation: ${currentVideoId}`);
+		state.resetSession();
+		state.activeVideoId = currentVideoId;
+		state.abortMixCheck();
 		setupPolling();
 	}
 
 	function onVisibilityChange()
 	{
-		if (!document.hidden)
+		if (!document.hidden && (!state.speedApplied || !state.musicChecked))
 		{
-			if (!speedApplied || !musicChecked)
-			{
-				console.log("[EfYT-ChSpeed] Tab activated with unresolved state — re-arming polling.");
-				setupPolling();
-				evaluateCurrentPage();
-			}
+			log("Tab activated with unresolved state — re-arming polling.");
+			setupPolling();
+			evaluateCurrentPage();
 		}
 	}
-
-	// -----------------------------------------------------------
-	// Event Listeners
-	// -----------------------------------------------------------
 
 	window.addEventListener("yt-navigate-finish", onVideoNavigation);
 	window.addEventListener("yt-page-data-updated", onVideoNavigation);
 	window.addEventListener("ratechange", onRateChange, true);
 	document.addEventListener("visibilitychange", onVisibilityChange);
-
 	onVideoNavigation();
 
-	// -----------------------------------------------------------
-	// Public API
-	// -----------------------------------------------------------
-
-	const chKeys = () => Object.keys(localStorage).filter(k => k.startsWith(CH_PREFIX));
+	// ============================================================
+	// PUBLIC API
+	// ============================================================
+	const fetchChannelKeys = () => Object.keys(localStorage).filter(storageKey => storageKey.startsWith(CH_PREFIX));
 
 	window.efytSpeed =
 	{
 		refresh()
 		{
-			console.log("[EfYT-ChSpeed] Manual refresh.");
-			activeVideoId = null;
-			lastChannelId = null;
-			lastChannelName = null;
+			log("Manual refresh triggered.");
+			
+			// Clear the current active video state to bypass the early exit check
+			state.activeVideoId = null;
 			onVideoNavigation();
 		},
 
 		getWatchVideoId()
 		{
-			const id = getWatchVideoId();
-			console.log("[EfYT-ChSpeed] Watch video ID:", id ?? "(not found)");
-			return id;
+			const videoId = fetchWatchVideoId();
+			log("Watch ID:", videoId);
+			return videoId;
 		},
 
 		getChannelId()
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const id = getChannelId(pr) ?? null;
-			console.log("[EfYT-ChSpeed] Channel ID:", id ?? "(not found)");
-			return id;
+			const channelId = fetchChannelId();
+			log("Channel ID:", channelId);
+			return channelId;
 		},
 
 		isOfficialArtistChannel()
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const expectedName = pr?.videoDetails?.author;
-			const isArtist = isOfficialArtistChannel(expectedName);
-			console.log("[EfYT-ChSpeed] Official Artist Channel:", isArtist);
+			const isArtist = checkOfficialArtistChannel(fetchPlayerResponse()?.videoDetails?.author);
+			log("Official Artist Channel:", isArtist);
 			return isArtist;
 		},
 
 		hasArtistBadgeSvg()
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const expectedName = pr?.videoDetails?.author;
-			const hasSvg = hasArtistBadgeSvg(expectedName);
-			console.log("[EfYT-ChSpeed] Artist badge SVG present:", hasSvg);
-			return hasSvg;
+			const hasBadge = checkArtistBadgeSvg(fetchPlayerResponse()?.videoDetails?.author);
+			log("Artist badge SVG present:", hasBadge);
+			return hasBadge;
 		},
 
 		getVideoTitle()
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const title = pr?.videoDetails?.title || getVideoTitle();
-			console.log("[EfYT-ChSpeed] Video title:", title || "(not found)");
-			return title;
+			const videoTitle = fetchPlayerResponse()?.videoDetails?.title || fetchVideoTitle();
+			log("Video Title:", videoTitle);
+			return videoTitle;
 		},
 
-		titleMatchesMusicKeyword(title = (document.getElementById("movie_player")?.getPlayerResponse()?.videoDetails?.title || getVideoTitle()))
+		titleMatchesMusicKeyword(videoTitle = this.getVideoTitle())
 		{
-			const matches = titleMatchesMusicKeyword(title);
-			console.log(`[EfYT-ChSpeed] Title "${title}" matches keyword:`, matches);
-			return matches;
+			const isMatch = checkTitleMatchesMusicKeyword(videoTitle);
+			log(`Title matches keyword:`, isMatch);
+			return isMatch;
 		},
 
-		async checkMixIsMusic(videoId = getWatchVideoId())
+		async checkMixIsMusic(videoId = fetchWatchVideoId())
 		{
-			const isMusic = await checkMixIsMusic(videoId);
-			console.log("[EfYT-ChSpeed] Mix check result:", isMusic);
-			return isMusic;
+			const isMixMusic = await verifyMixIsMusic(videoId);
+			log("Playlist mix confirmed music:", isMixMusic);
+			return isMixMusic;
 		},
 
 		isMusicCategory()
 		{
-			const isMusic = isMusicCategory(document.getElementById("movie_player")?.getPlayerResponse());
-			console.log("[EfYT-ChSpeed] Is music category:", isMusic);
+			const isMusic = isMusicCategory();
+			log("Music category detected:", isMusic);
 			return isMusic;
 		},
 
 		getDefaultSpeed()
 		{
-			const s = getEfytDefaultSpeed();
-			console.log("[EfYT-ChSpeed] Default:", s + "x");
-			return s;
+			const defaultSpeed = getEfytDefaultSpeed();
+			log("Default EfYT Speed:", defaultSpeed + "x");
+			return defaultSpeed;
 		},
 
-		getSpeed(id)
+		getSpeed(channelId)
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const channelId = id || getChannelId(pr);
-			const s = loadChannelSpeed(channelId);
-			const name = lastChannelName || (pr ? getChannelName(pr) : channelId);
-			console.log(`[EfYT-ChSpeed] Speed for ${name || "(none)"}:`, s ? s + "x" : "(none)");
-			return s;
+			const targetChannelId = channelId || fetchChannelId();
+			const savedSpeed = loadChannelSpeed(targetChannelId);
+			
+			log(`Saved speed for ${state.lastChannelName || targetChannelId}:`, savedSpeed ? savedSpeed + "x" : "(none)");
+			return savedSpeed;
 		},
 
-		setSpeed(speed, id)
+		setSpeed(targetSpeed, channelId)
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const channelId = id || getChannelId(pr);
-			const name = lastChannelName || (pr ? getChannelName(pr) : channelId);
-			if (!channelId)
-			{
-				console.warn("[EfYT-ChSpeed] No channel detected.");
-				return;
-			}
-			saveChannelSpeed(channelId, speed, name);
-			stepToSpeed(speed);
+			const targetChannelId = channelId || fetchChannelId();
+			if (!targetChannelId) return warn("No channel detected.");
+			
+			saveChannelSpeed(targetChannelId, targetSpeed, state.lastChannelName || fetchChannelName());
+			stepToSpeed(targetSpeed);
 		},
 
-		clearSpeed(id)
+		clearSpeed(channelId)
 		{
-			const pr = document.getElementById("movie_player")?.getPlayerResponse();
-			const channelId = id || getChannelId(pr);
-			const name = lastChannelName || (pr ? getChannelName(pr) : channelId);
-			if (!channelId)
-			{
-				console.warn("[EfYT-ChSpeed] No channel detected.");
-				return;
-			}
-			localStorage.removeItem(CH_PREFIX + id);
-			console.log(`[EfYT-ChSpeed] Cleared speed for ${name}.`);
+			const targetChannelId = channelId || fetchChannelId();
+			if (!targetChannelId) return warn("No channel detected.");
+			
+			localStorage.removeItem(CH_PREFIX + targetChannelId);
+			log(`Cleared speed for ${state.lastChannelName || fetchChannelName()}.`);
 		},
 
 		clearAll()
 		{
-			const keys = chKeys();
-			keys.forEach(k => localStorage.removeItem(k));
-			console.log(`[EfYT-ChSpeed] Cleared ${keys.length} override(s).`);
+			const channelKeys = fetchChannelKeys();
+			channelKeys.forEach(storageKey => localStorage.removeItem(storageKey));
+			log(`Cleared ${channelKeys.length} saved channel override(s).`);
 		},
 
 		export()
 		{
-			const out = {};
-			chKeys().forEach(k => {
-				const key = k.slice(CH_PREFIX.length);
-				const raw = localStorage.getItem(k);
+			const exportedData = Object.fromEntries(fetchChannelKeys().map(storageKey =>
+			{
+				const rawData = localStorage.getItem(storageKey);
 				try
 				{
-					out[key] = JSON.parse(raw);
+					return [storageKey.slice(CH_PREFIX.length), JSON.parse(rawData)];
 				}
-				catch (_)
+				catch
 				{
-					out[key] = { speed: parseFloat(raw), name: "Unknown" };
+					return [storageKey.slice(CH_PREFIX.length), { speed: parseFloat(rawData), name: "Unknown" }];
 				}
-			});
-			const json = JSON.stringify(out, null, 2);
+			}));
 
-			const blob = new Blob([json], { type: "application/json" });
-			const url  = URL.createObjectURL(blob);
-
-			const ts       = new Date().toISOString().replace(/[:.]/g, "-");
-			const filename = `efyt-channel-speeds_${ts}.json`;
-
-			const a = document.createElement("a");
-			a.href     = url;
-			a.download = filename;
-			document.body.appendChild(a);
-			a.click();
-			a.remove();
-
-			URL.revokeObjectURL(url);
-
-			console.log(`[EfYT-ChSpeed] Exported ${Object.keys(out).length} channel(s) to ${filename}`);
-			return out;
+			const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(exportedData, null, 2)], { type: "application/json" }));
+			const downloadAnchor = Object.assign(document.createElement("a"), { href: blobUrl, download: `efyt-channel-speeds_${new Date().toISOString().replace(/[:.]/g, "-")}.json` });
+			
+			document.body.appendChild(downloadAnchor);
+			downloadAnchor.click();
+			downloadAnchor.remove();
+			URL.revokeObjectURL(blobUrl);
+			
+			log(`Exported ${Object.keys(exportedData).length} channel(s)`);
+			return exportedData;
 		},
 
 		import()
 		{
 			const OVERLAY_ID = "efyt-chspeed-import-btn";
-			const OVERLAY_STYLE =
+			if (document.getElementById(OVERLAY_ID)) return log("Import button is already visible.");
+
+			const overlayButton = document.createElement("button");
+			overlayButton.id = OVERLAY_ID;
+			overlayButton.textContent = "📂 Click to choose EfYT speeds JSON";
+			
+			Object.assign(overlayButton.style,
 			{
 				position: "fixed",
 				top: "16px",
@@ -737,123 +629,65 @@
 				border: "none",
 				borderRadius: "24px",
 				fontSize: "52px",
-				fontFamily: "sans-serif",
 				cursor: "pointer",
-				boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+				boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
+			});
+
+			const fileInput = Object.assign(document.createElement("input"),
+			{
+				type: "file",
+				accept: ".json,application/json",
+				style: "display:none"
+			});
+			
+			const cleanupElements = () =>
+			{
+				overlayButton.remove();
+				fileInput.remove();
 			};
 
-			if (document.getElementById(OVERLAY_ID))
+			fileInput.addEventListener("change", () =>
 			{
-				console.log("[EfYT-ChSpeed] Import button is already showing — click it in the top-right corner.");
-				return;
-			}
+				cleanupElements();
+				const selectedFile = fileInput.files?.[0];
+				if (!selectedFile || (selectedFile.type !== "application/json" && !selectedFile.name.endsWith(".json"))) return err("Import failed — invalid file type.");
 
-			function isJsonFile(file)
-			{
-				return file.type === "application/json" || file.name.toLowerCase().endsWith(".json");
-			}
-
-			function applyImportedData(json)
-			{
-				let parsed;
-				try
+				const fileReader = new FileReader();
+				
+				fileReader.onload = () =>
 				{
-					parsed = JSON.parse(json);
-				}
-				catch (_)
-				{
-					console.error("[EfYT-ChSpeed] Import failed — file is not valid JSON.");
-					return;
-				}
-
-				let count = 0;
-				for (const [id, value] of Object.entries(parsed))
-				{
-					if (value && typeof value === "object" && value.speed !== undefined)
+					try
 					{
-						const speed = parseFloat(value.speed);
-						if (isNaN(speed) || speed <= 0) continue;
-						localStorage.setItem(CH_PREFIX + id, JSON.stringify(value));
-						count++;
-					}
-				}
-				console.log(`[EfYT-ChSpeed] Imported ${count} channel(s).`);
-			}
-
-			function showImportButton()
-			{
-				const overlay = document.createElement("button");
-				overlay.id = OVERLAY_ID;
-				overlay.textContent = "📂 Click to choose EfYT speeds JSON";
-				Object.assign(overlay.style, OVERLAY_STYLE);
-
-				const input = document.createElement("input");
-				input.type = "file";
-				input.accept = ".json,application/json";
-				input.style.display = "none";
-
-				const overlayController = new AbortController();
-				const inputController   = new AbortController();
-
-				const timeoutId = setTimeout
-				(
-					() =>
-					{
-						if (inputController.signal.aborted) return;
-						overlayController.abort();
-						inputController.abort();
-						overlay.remove();
-						input.remove();
-						console.log("[EfYT-ChSpeed] Import cancelled — button timed out.");
-					},
-					8000
-				);
-
-				input.addEventListener
-				(
-					"change",
-					() =>
-					{
-						inputController.abort();
-						input.remove();
-
-						const file = input.files?.[0];
-						if (!file) return;
-
-						if (!isJsonFile(file))
+						const parsedData = JSON.parse(fileReader.result);
+						let importedCount = 0;
+						
+						for (const [channelId, channelData] of Object.entries(parsedData))
 						{
-							console.error(`[EfYT-ChSpeed] Import failed — "${file.name}" is not a .json file.`);
-							return;
+							if (channelData?.speed > 0)
+							{
+								localStorage.setItem(CH_PREFIX + channelId, JSON.stringify(channelData));
+								importedCount++;
+							}
 						}
-
-						const reader   = new FileReader();
-						reader.onload  = () => applyImportedData(reader.result);
-						reader.onerror = () => console.error("[EfYT-ChSpeed] Import failed — could not read file.");
-						reader.readAsText(file);
-					},
-					{ signal: inputController.signal }
-				);
-
-				overlay.addEventListener
-				(
-					"click",
-					() =>
+						log(`Imported ${importedCount} channel(s).`);
+					}
+					catch
 					{
-						clearTimeout(timeoutId);
-						overlayController.abort();
-						overlay.remove();
-						input.click();
-					},
-					{ signal: overlayController.signal }
-				);
+						err("Import failed — invalid JSON format.");
+					}
+				};
+				fileReader.readAsText(selectedFile);
+			});
 
-				document.body.appendChild(overlay);
-				document.body.appendChild(input);
-
-				console.log("[EfYT-ChSpeed] Click the blue button in the top-right corner to choose a file.");
-			}
-
-			showImportButton();
+			overlayButton.addEventListener("click", () =>
+			{
+				cleanupElements();
+				fileInput.click();
+			});
+			
+			document.body.append(overlayButton, fileInput);
+			setTimeout(cleanupElements, 8000);
+			log("Click the blue button in the top-right corner to select a file.");
 		},
 
 		help()
@@ -899,7 +733,7 @@
 				"color:#8ab4f8;font-weight:bold",
 				"color:#ccc"
 			);
-		},
+		}
 	};
 
 	console.log("%c[EfYT-ChSpeed] Active. %cType efytSpeed.help() for commands.", "color:#fff;font-weight:bold", "color:#aaa");
