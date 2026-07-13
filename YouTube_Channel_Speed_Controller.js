@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v38)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v39)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -34,7 +34,7 @@
 	const TITLE_KEYWORDS = [
 		"official audio", "official video", "music video", "mv", "official lyric video",
 		"official visualizer", "lyric video", "lyrics", "audio only", "visualizer",
-		"dance video", "dance cover", "dance practice", "choreography", "choreo",
+		"dance", "choreography", "choreo",
 		"acoustic cover", "remix", "mashup", "type beat",
 		"dj set", "live set", "live session", "live performance",
 		"karaoke", "instrumental", "backing track",
@@ -109,13 +109,11 @@
 		}
 	}
 
-	function fetchWatchVideoId()
+	function fetchWatchVideoId(playerResponse = fetchPlayerResponse())
 	{
-		const playerResponse = fetchPlayerResponse();
-		
-		return location.search.match(/[?&]v=([^&#]+)/)?.[1]
-			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id")
-			?? playerResponse?.videoDetails?.videoId;
+		return playerResponse?.videoDetails?.videoId
+			?? location.search.match(/[?&]v=([^&#]+)/)?.[1]
+			?? document.querySelector("ytd-watch-flexy")?.getAttribute("video-id");
 	}
 
 	const fetchChannelId = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.channelId;
@@ -134,7 +132,9 @@
 		return svgPathElement ? containerMatchesChannel(svgPathElement, expectedChannelName) : false;
 	};
 
-	const fetchVideoTitle = () => document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim() ?? "";
+	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.title
+		?? document.querySelector(TITLE_SELECTOR_COMBINED)?.textContent?.trim()
+		?? "";
 	
 	const checkTitleMatchesMusicKeyword = (videoTitle) => videoTitle ? TITLE_KEYWORDS_REGEX.test(videoTitle) : false;
 	
@@ -152,13 +152,21 @@
 		
 		if (checkOfficialArtistChannel(authorName) || checkArtistBadgeSvg(authorName)) return true;
 		
-		const videoTitle = playerResponse?.videoDetails?.title || fetchVideoTitle();
+		const videoTitle = fetchVideoTitle(playerResponse);
 		return checkTitleMatchesMusicKeyword(videoTitle);
 	}
 
 	const checkDomSettledForChannel = (expectedChannelName) => expectedChannelName ? textIncludesNormalized(document.querySelector("#owner, ytd-channel-name")?.textContent, expectedChannelName) : false;
 	
-	const isAdPlaying = () => !!document.querySelector(".ad-showing, .ad-interrupting, .html5-video-player.ad-showing");
+	const isAdPlaying = () =>
+	{
+		const player = getMoviePlayer();
+		return !!(
+			player?.classList.contains("ad-showing") ||
+			player?.getAdState?.() > 0 ||
+			document.querySelector(".ad-showing, .ad-interrupting")
+		);
+	};
 
 	async function verifyMixIsMusic(videoId)
 	{
@@ -169,8 +177,7 @@
 		
 		if (!innerTubeApiKey || !innerTubeContext) return null;
 
-		const playlistPanelPath = "contents.twoColumnWatchNextResults.playlist.playlist.contents.playlistPanelVideoRenderer";
-		const apiEndpoint = `https://www.youtube.com/youtubei/v1/next?fields=${encodeURIComponent(`${playlistPanelPath}.videoId,${playlistPanelPath}.navigationEndpoint.watchEndpoint.playerParams`)}&prettyPrint=false&key=${innerTubeApiKey}`;
+		const apiEndpoint = `https://www.youtube.com/youtubei/v1/next?key=${innerTubeApiKey}`;
 
 		state.abortMixCheck();
 		const abortController = new AbortController();
@@ -209,6 +216,9 @@
 		}
 	}
 
+	// ============================================================
+	// STORAGE & CONTROLS
+	// ============================================================
 	function loadChannelSpeed(channelId)
 	{
 		if (!channelId) return null;
@@ -317,10 +327,10 @@
 		const videoElement = event.target;
 		if (videoElement.tagName !== "VIDEO" || !videoElement.closest("#movie_player")) return;
 
-		const activeVideoId = fetchWatchVideoId();
+		const playerResponse = fetchPlayerResponse();
+		const activeVideoId = fetchWatchVideoId(playerResponse);
 		if (!activeVideoId || activeVideoId !== state.activeVideoId) return;
 
-		const playerResponse = fetchPlayerResponse();
 		if (isMusicCategory(playerResponse)) return;
 
 		const targetChannelId = state.lastChannelId || fetchChannelId(playerResponse);
@@ -338,7 +348,8 @@
 
 	function evaluateCurrentPage()
 	{
-		const activeVideoId = fetchWatchVideoId();
+		const playerResponse = fetchPlayerResponse();
+		const activeVideoId = fetchWatchVideoId(playerResponse);
 		
 		if (!activeVideoId)
 		{
@@ -354,7 +365,6 @@
 			state.suppressSave = true;
 		}
 
-		const playerResponse = fetchPlayerResponse();
 		const videoElement = getMoviePlayer()?.querySelector("video") || document.querySelector("video");
 		
 		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById("efyt-speed-plus")) return;
@@ -433,7 +443,8 @@
 
 	function onVideoNavigation()
 	{
-		const currentVideoId = fetchWatchVideoId();
+		const playerResponse = fetchPlayerResponse();
+		const currentVideoId = fetchWatchVideoId(playerResponse);
 		
 		if (!currentVideoId)
 		{
@@ -478,8 +489,6 @@
 		refresh()
 		{
 			log("Manual refresh triggered.");
-			
-			// Clear the current active video state to bypass the early exit check
 			state.activeVideoId = null;
 			onVideoNavigation();
 		},
@@ -500,26 +509,28 @@
 
 		isOfficialArtistChannel()
 		{
-			const isArtist = checkOfficialArtistChannel(fetchPlayerResponse()?.videoDetails?.author);
+			const pr = fetchPlayerResponse();
+			const isArtist = checkOfficialArtistChannel(pr?.videoDetails?.author);
 			log("Official Artist Channel:", isArtist);
 			return isArtist;
 		},
 
 		hasArtistBadgeSvg()
 		{
-			const hasBadge = checkArtistBadgeSvg(fetchPlayerResponse()?.videoDetails?.author);
+			const pr = fetchPlayerResponse();
+			const hasBadge = checkArtistBadgeSvg(pr?.videoDetails?.author);
 			log("Artist badge SVG present:", hasBadge);
 			return hasBadge;
 		},
 
 		getVideoTitle()
 		{
-			const videoTitle = fetchPlayerResponse()?.videoDetails?.title || fetchVideoTitle();
+			const videoTitle = fetchVideoTitle();
 			log("Video Title:", videoTitle);
 			return videoTitle;
 		},
 
-		titleMatchesMusicKeyword(videoTitle = this.getVideoTitle())
+		titleMatchesMusicKeyword(videoTitle = fetchVideoTitle())
 		{
 			const isMatch = checkTitleMatchesMusicKeyword(videoTitle);
 			log(`Title matches keyword:`, isMatch);
@@ -558,20 +569,22 @@
 
 		setSpeed(targetSpeed, channelId)
 		{
-			const targetChannelId = channelId || fetchChannelId();
+			const playerResponse = fetchPlayerResponse();
+			const targetChannelId = channelId || fetchChannelId(playerResponse);
 			if (!targetChannelId) return warn("No channel detected.");
 			
-			saveChannelSpeed(targetChannelId, targetSpeed, state.lastChannelName || fetchChannelName());
+			saveChannelSpeed(targetChannelId, targetSpeed, state.lastChannelName || fetchChannelName(playerResponse));
 			stepToSpeed(targetSpeed);
 		},
 
 		clearSpeed(channelId)
 		{
-			const targetChannelId = channelId || fetchChannelId();
+			const playerResponse = fetchPlayerResponse();
+			const targetChannelId = channelId || fetchChannelId(playerResponse);
 			if (!targetChannelId) return warn("No channel detected.");
 			
 			localStorage.removeItem(CH_PREFIX + targetChannelId);
-			log(`Cleared speed for ${state.lastChannelName || fetchChannelName()}.`);
+			log(`Cleared speed for ${state.lastChannelName || fetchChannelName(playerResponse)}.`);
 		},
 
 		clearAll()
