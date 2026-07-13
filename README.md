@@ -51,14 +51,14 @@ Press `F12` (or `Ctrl+Shift+I` on Windows/Linux, `Cmd+Option+I` on Mac) to open 
 ### Export
 Run the following in the Console:
 ```javascript
-efytSpeed.export();
+efytSpeed.exportChannelSpeeds();
 ```
 Your saved channels and speeds will be exported as a JSON file.
 
 ### Import
 Run the following in the Console:
 ```javascript
-efytSpeed.import();
+efytSpeed.importChannelSpeeds();
 ```
 A large blue button will appear in the top-right corner of the page:
 
