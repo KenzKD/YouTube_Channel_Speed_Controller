@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v39)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v39.2)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -28,7 +28,17 @@
 	const err = (...args) => console.error(LOG_PREFIX, ...args);
 
 	const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 005.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
-	const BADGE_SELECTOR_COMBINED = 'badge-shape[aria-label="Official Artist Channel"], [aria-label="Official Artist Channel"]';
+	
+	// English aria-labels, legacy classes, and modern structural classes
+	const BADGE_SELECTOR_COMBINED = [
+		'badge-shape[aria-label="Official Artist Channel"]',
+		'[aria-label="Official Artist Channel"]',
+		'.badge-style-type-verified-artist',
+		'badge-shape.yt-badge-shape--verified-artist',
+		'badge-shape[class*="verified-artist"]',
+		'.yt-badge-shape--verified-artist'
+	].join(', ');
+
 	const TITLE_SELECTOR_COMBINED = "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer";
 
 	const TITLE_KEYWORDS = [
@@ -124,12 +134,51 @@
 
 	const textIncludesNormalized = (sourceText, targetText) => !!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
 
-	const containerMatchesChannel = (element, expectedChannelName) => !expectedChannelName || textIncludesNormalized(element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name")?.textContent, expectedChannelName);
+	// Normalize SVG path representations to protect against browser spacing changes
+	const isArtistSvgPath = (d) =>
+	{
+		if (!d) return false;
+		const normalizedD = d.replace(/[\s,]+/g, " ").trim();
+		
+		// Match standard music note path prefixes
+		if (normalizedD.startsWith("M12 3v10") || normalizedD.startsWith("M12 3 v10")) return true;
+		
+		// Match scalloped badge outline path prefixes
+		if (normalizedD.startsWith("M9.03 2.24") || normalizedD.startsWith("M9.03 2.242")) return true;
+		
+		// Exact comparison fallback
+		if (normalizedD === ARTIST_BADGE_SVG_PATH.replace(/[\s,]+/g, " ").trim()) return true;
+		
+		return false;
+	};
+
+	const containerMatchesChannel = (element, expectedChannelName) =>
+	{
+		const ownerContainer = element.closest("#owner, ytd-video-owner-renderer, ytd-channel-name");
+		if (!ownerContainer) return false;
+
+		// If the badge is verified inside the main metadata block of the watch page, 
+		// it is associated with the active video. This skips string name comparison checks.
+		const isMainWatchOwner = !!element.closest("ytd-watch-metadata #owner, ytd-watch-metadata ytd-video-owner-renderer, ytd-video-primary-info-renderer #owner");
+		if (isMainWatchOwner) return true;
+
+		if (!expectedChannelName || expectedChannelName === "Unknown Channel") return true;
+
+		return textIncludesNormalized(ownerContainer.textContent, expectedChannelName);
+	};
 
 	const checkArtistBadgeSvg = (expectedChannelName) =>
 	{
-		const svgPathElement = document.querySelector(`#owner path[d="${ARTIST_BADGE_SVG_PATH}"], ytd-channel-name path[d="${ARTIST_BADGE_SVG_PATH}"]`);
-		return svgPathElement ? containerMatchesChannel(svgPathElement, expectedChannelName) : false;
+		const paths = document.querySelectorAll('#owner path, ytd-channel-name path, ytd-video-owner-renderer path');
+		for (const path of paths)
+		{
+			const d = path.getAttribute("d");
+			if (isArtistSvgPath(d) && containerMatchesChannel(path, expectedChannelName))
+			{
+				return true;
+			}
+		}
+		return false;
 	};
 
 	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => playerResponse?.videoDetails?.title
@@ -140,8 +189,12 @@
 	
 	const checkOfficialArtistChannel = (expectedChannelName) =>
 	{
-		const badgeElement = document.querySelector(BADGE_SELECTOR_COMBINED);
-		return badgeElement ? containerMatchesChannel(badgeElement, expectedChannelName) : false;
+		const badges = document.querySelectorAll(BADGE_SELECTOR_COMBINED);
+		for (const badge of badges)
+		{
+			if (containerMatchesChannel(badge, expectedChannelName)) return true;
+		}
+		return false;
 	};
 
 	function isMusicCategory(playerResponse = fetchPlayerResponse())
