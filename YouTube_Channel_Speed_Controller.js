@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v42)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v43)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -560,7 +560,16 @@
 		
 		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById("efyt-speed-plus")) return;
 
-		// 1. Channel Speed
+		// 1. Safety Checks (Ad and Readiness)
+		// Yield executing speed adjustments if an ad is playing or video media metadata/buffer isn't active (readyState < 2)
+		if (isAdPlaying() || videoElement.readyState < 2)
+		{
+			clearTimeout(state.timers.cutoff);
+			state.timers.cutoff = setTimeout(clearPolling, 5000); // Postpone safety cutoff
+			return;
+		}
+
+		// 2. Channel Speed
 		if (!state.speedApplied)
 		{
 			const channelId = fetchChannelId(playerResponse);
@@ -577,7 +586,7 @@
 			}
 		}
 
-		// 2. Music Check Override
+		// 3. Music Check Override
 		if (!state.musicChecked)
 		{
 			const isMusicVideo = isMusicCategory(playerResponse);
