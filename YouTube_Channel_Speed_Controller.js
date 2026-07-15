@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v44)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v45)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -137,8 +137,8 @@
 
 	function fetchWatchVideoId(playerResponse = fetchPlayerResponse())
 	{
-		return playerResponse?.videoDetails?.videoId
-			?? location.search.match(/[?&]v=([^&#]+)/)?.[1]
+		return location.search.match(/[?&]v=([^&#]+)/)?.[1]
+			?? playerResponse?.videoDetails?.videoId
 			?? document.querySelector(SELECTORS.watchFlexy)?.getAttribute("video-id");
 	}
 
@@ -174,9 +174,6 @@
 	{
 		const ownerContainer = element.closest(SELECTORS.ownerContainer);
 		if (!ownerContainer) return false;
-
-		const isMainWatchOwner = !!element.closest(SELECTORS.mainWatchOwner);
-		if (isMainWatchOwner) return true;
 
 		if (!expectedChannelName || expectedChannelName === "Unknown Channel") return true;
 
