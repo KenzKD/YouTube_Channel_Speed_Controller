@@ -1,19 +1,24 @@
-(async function runEfytTestSuite() {
+(async function runEfytTestSuite()
+{
 	console.log("[EfYT-ChSpeed] %cStarting diagnostic and logic tests...", "color:#8ab4f8; font-weight:bold; font-size: 14px;");
-	
+
 	const results = { passed: 0, failed: 0 };
 
-	function assert(condition, message) {
-		if (condition) {
+	function assert(condition, message)
+	{
+		if (condition)
+		{
 			console.log(`[EfYT-ChSpeed] %c[PASS]%c ${message}`, "color:#0f9d58; font-weight:bold;", "color:inherit;");
 			results.passed++;
-		} else {
+		} else
+		{
 			console.error(`[EfYT-ChSpeed] %c[FAIL]%c ${message}`, "color:#db4437; font-weight:bold;", "color:inherit;");
 			results.failed++;
 		}
 	}
 
-	function printSectionHeader(num, name, color) {
+	function printSectionHeader(num, name, color)
+	{
 		console.log("[EfYT-ChSpeed] "); // spacing line that survives filtering
 		console.log(`[EfYT-ChSpeed] %c============================================================`, `color: ${color}; opacity: 0.7;`);
 		console.log(`[EfYT-ChSpeed] %c[SECTION ${num}] ${name}`, `color: ${color}; font-weight: bold; font-size: 12px;`);
@@ -21,11 +26,47 @@
 	}
 
 	// ============================================================
+	// TEST-HARNESS SAFETY NET
+	// ============================================================
+	// stepToSpeed() (production code, unchanged) emulates Shift+>/Shift+
+	// via document.activeElement || document.body. Inside these mocked
+	// tests that emulation still bubbles past our mocks to the REAL
+	// document/window — on the actual live page you're testing against,
+	// that can nudge the REAL video's REAL speed, which then fires a
+	// genuine "ratechange" that the real onRateChange handler (reading
+	// the mocked movie_player) misattributes to whatever mock channel is
+	// active. This produced the observed drift (2x -> 2.25x -> 2.75x ->
+	// 3x for "Tech Channels" across runs). Every event this script
+	// dispatches is script-constructed and therefore never `isTrusted`,
+	// so we can safely swallow only synthetic key events here without
+	// touching real user input.
+	let removeUntrustedKeyGuard = null;
+	function installUntrustedKeyGuard()
+	{
+		const block = (event) =>
+		{
+			if (!event.isTrusted)
+			{
+				event.stopImmediatePropagation();
+				event.preventDefault();
+			}
+		};
+		window.addEventListener("keydown", block, true);
+		window.addEventListener("keyup", block, true);
+		return () =>
+		{
+			window.removeEventListener("keydown", block, true);
+			window.removeEventListener("keyup", block, true);
+		};
+	}
+
+	// ============================================================
 	// 1. NAMESPACE INITIALIZATION
 	// ============================================================
 	printSectionHeader("1", "NAMESPACE INITIALIZATION", "#2196f3");
 	assert(typeof window.efytSpeed === "object", "window.efytSpeed namespace is active on the window object");
-	if (!window.efytSpeed) {
+	if (!window.efytSpeed)
+	{
 		console.error("[EfYT-ChSpeed] Aborting tests: window.efytSpeed is not initialized. Please ensure your script is loaded first.");
 		return;
 	}
@@ -35,25 +76,29 @@
 	// ============================================================
 	const EFYT_PREFIX = "efyt_ch_speed::";
 	const backupData = {};
-	
+
 	// Backup local storage configurations
 	const existingKeys = [];
-	for (let i = 0; i < localStorage.length; i++) {
+	for (let i = 0; i < localStorage.length; i++)
+	{
 		existingKeys.push(localStorage.key(i));
 	}
-	existingKeys.forEach(key => {
-		if (key && key.startsWith(EFYT_PREFIX)) {
+	existingKeys.forEach(key =>
+	{
+		if (key && key.startsWith(EFYT_PREFIX))
+		{
 			backupData[key] = localStorage.getItem(key);
 		}
 	});
 
 	// Backup active video playback rate using window.efytSpeed functions
 	const originalChannelId = window.efytSpeed.fetchChannelId();
-	const originalSpeed = originalChannelId 
+	const originalSpeed = originalChannelId
 		? (window.efytSpeed.loadChannelSpeed(originalChannelId) ?? window.efytSpeed.getEfytDefaultSpeed())
 		: null;
 
-	try {
+	try
+	{
 		// ============================================================
 		// 2. LOCAL STORAGE CRUD TESTS
 		// ============================================================
@@ -89,7 +134,8 @@
 			{ title: "How to Build a Custom Script Tutorial", expected: false }
 		];
 
-		matchTests.forEach(({ title, expected }) => {
+		matchTests.forEach(({ title, expected }) =>
+		{
 			const isMatch = window.efytSpeed.checkTitleMatchesMusicKeyword(title);
 			assert(isMatch === expected, `checkTitleMatchesMusicKeyword() classified "${title}" as ${isMatch}`);
 		});
@@ -98,7 +144,8 @@
 		// 4. LIVE DOM DETECTION
 		// ============================================================
 		printSectionHeader("4", "LIVE DOM DETECTION", "#e91e63");
-		try {
+		try
+		{
 			const retrievedTitle = window.efytSpeed.fetchVideoTitle();
 			assert(typeof retrievedTitle === "string" && retrievedTitle.length > 0, `fetchVideoTitle() successfully extracts live title: "${retrievedTitle}"`);
 
@@ -108,7 +155,8 @@
 
 			const svgPathMatch = window.efytSpeed.checkArtistBadgeSvg();
 			assert(typeof svgPathMatch === "boolean", `checkArtistBadgeSvg() runs on live page: ${svgPathMatch}`);
-		} catch (error) {
+		} catch (error)
+		{
 			console.error("[EfYT-ChSpeed] An error occurred during live DOM tests:", error);
 			results.failed++;
 		}
@@ -117,7 +165,8 @@
 		// 5. ASYNC MIX MUSIC API DETECTION
 		// ============================================================
 		printSectionHeader("5", "ASYNC MIX MUSIC API DETECTION", "#9c27b0");
-		try {
+		try
+		{
 			// Query the active video ID, or fall back to a standard music video ID if on a non-watch page
 			const testVideoId = window.efytSpeed.fetchWatchVideoId() || "kJQP7kiw5Fk";
 			const mixResult = await window.efytSpeed.verifyMixIsMusic(testVideoId);
@@ -125,7 +174,8 @@
 				mixResult === true || mixResult === false || mixResult === null,
 				`verifyMixIsMusic() resolved diagnostic run on ID "${testVideoId}" (Result: ${mixResult})`
 			);
-		} catch (error) {
+		} catch (error)
+		{
 			console.error("[EfYT-ChSpeed] An error occurred during verifyMixIsMusic testing:", error);
 			results.failed++;
 		}
@@ -134,31 +184,40 @@
 		// 6. DATA PORTABILITY
 		// ============================================================
 		printSectionHeader("6", "DATA PORTABILITY", "#607d8b");
-		try {
+		try
+		{
 			window.efytSpeed.saveChannelSpeed(1.5, "temp_export_ch");
 			const exportObject = window.efytSpeed.exportChannelSpeeds();
 			assert(exportObject && exportObject["temp_export_ch"] !== undefined, "exportChannelSpeeds() gathers valid configurations as a key-value structure");
 			window.efytSpeed.clearSpeed("temp_export_ch");
-		} catch (error) {
+		} catch (error)
+		{
 			console.error("[EfYT-ChSpeed] An error occurred during export testing:", error);
 			results.failed++;
 		}
 
-		try {
+		try
+		{
 			window.efytSpeed.importChannelSpeeds();
 			const importBtn = document.getElementById("efyt-chspeed-import-btn");
 			assert(importBtn !== null, "importChannelSpeeds() renders overlay button for choosing file");
 			if (importBtn) importBtn.remove();
-		} catch (error) {
+		} catch (error)
+		{
 			console.error("[EfYT-ChSpeed] An error occurred during import testing:", error);
 			results.failed++;
 		}
+
+		// From here on, tests emulate speed changes via real keyboard
+		// events (see safety-net comment above) — install the guard.
+		removeUntrustedKeyGuard = installUntrustedKeyGuard();
 
 		// ============================================================
 		// 7. SPA TRANSITION & INTEGRATION TESTS
 		// ============================================================
 		printSectionHeader("7", "SPA TRANSITION & INTEGRATION TESTS", "#673ab7");
-		try {
+		try
+		{
 			console.log("[EfYT-ChSpeed] %c[SPA Mocks] Setting up simulated DOM and window environment...", "color:#e6c229; font-weight:bold;");
 
 			const originalGetElementById = document.getElementById;
@@ -182,7 +241,8 @@
 					'badge-shape[class*="verified-artist"]',
 					'.yt-badge-shape--verified-artist'
 				].join(', '),
-				videoTitle: "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer"
+				videoTitle: "ytd-watch-metadata h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer",
+				adContainers: ".ad-showing, .ad-interrupting"
 			};
 
 			const ARTIST_BADGE_SVG_PATH = "M9.03 2.242 8.272 3H7.2A4.2 4.2 0 003 7.2v1.072l-.758.758a4.2 4.2 0 000 5.94l.758.758V16.8A4.2 4.2 0 007.2 21h1.072l.758.758a4.2 4.2 0 000 5.94 0l.758-.758H16.8a4.2 4.2 0 004.2-4.2v-1.072l.758-.758a4.2 4.2 0 000-5.94L21 8.272V7.2A4.2 4.2 0 0016.8 3h-1.072l-.758-.758a4.2 4.2 0 00-5.94 0Zm7.73 6.638a.5.5 0 01.241.427v1.743a.256.256 0 01-.386.219L14.001 9.7v4.55a2.75 2.75 0 11-2-2.646V6.888a.5.5 0 01.759-.428l4 2.42Z";
@@ -203,14 +263,15 @@
 				get playbackRate() { return mockState.playbackRate; },
 				set playbackRate(v) { mockState.playbackRate = v; },
 				readyState: 4,
-				closest: (selector) => {
+				closest: (selector) =>
+				{
 					if (selector === "#movie_player") return mockPlayer;
 					return null;
 				}
 			};
 
 			const mockButton = {
-				click: () => {} // fallback directly sets the rate inside the script's controller logic
+				click: () => { } // fallback directly sets the rate inside the script's controller logic
 			};
 
 			const mockPlayer = {
@@ -231,46 +292,62 @@
 				classList: {
 					contains: () => false
 				},
-				querySelector: (selector) => {
+				querySelector: (selector) =>
+				{
 					if (selector === "video") return mockVideo;
 					return null;
 				}
 			};
 
-			document.getElementById = function(id) {
+			document.getElementById = function (id)
+			{
 				if (id === "movie_player") return mockPlayer;
 				if (id === "efyt-speed-plus" || id === "efyt-speed-minus") return mockButton;
 				return originalGetElementById.call(document, id);
 			};
 
-			document.querySelector = function(selector) {
+			document.querySelector = function (selector)
+			{
 				if (selector === "video" || selector === MOCK_SELECTORS.videoElement) return mockVideo;
-				if (selector === MOCK_SELECTORS.watchFlexy) {
+				if (selector === MOCK_SELECTORS.watchFlexy)
+				{
 					return { getAttribute: (attr) => attr === "video-id" ? mockState.videoId : null };
 				}
-				if (selector === MOCK_SELECTORS.channelName) {
+				if (selector === MOCK_SELECTORS.channelName)
+				{
 					return { textContent: mockState.author };
 				}
-				if (selector === MOCK_SELECTORS.videoTitle) {
+				if (selector === MOCK_SELECTORS.videoTitle)
+				{
 					return { textContent: mockState.title };
 				}
-				if (selector === MOCK_SELECTORS.ownerContainer || selector === MOCK_SELECTORS.mainWatchOwner) {
+				if (selector === MOCK_SELECTORS.ownerContainer || selector === MOCK_SELECTORS.mainWatchOwner)
+				{
 					return { textContent: mockState.author + " Subscriber Count" };
+				}
+				if (selector === MOCK_SELECTORS.adContainers)
+				{
+					return null;
 				}
 				return originalQuerySelector.call(document, selector);
 			};
 
-			document.querySelectorAll = function(selector) {
-				if (selector === MOCK_SELECTORS.artistBadges) {
-					if (mockState.isArtist) {
+			document.querySelectorAll = function (selector)
+			{
+				if (selector === MOCK_SELECTORS.artistBadges)
+				{
+					if (mockState.isArtist)
+					{
 						return [{
 							closest: () => ({ textContent: mockState.author + " Subscriber Count" })
 						}];
 					}
 					return [];
 				}
-				if (selector === MOCK_SELECTORS.ownerPaths) {
-					if (mockState.isArtistSvg) {
+				if (selector === MOCK_SELECTORS.ownerPaths)
+				{
+					if (mockState.isArtistSvg)
+					{
 						return [{
 							getAttribute: (attr) => attr === "d" ? ARTIST_BADGE_SVG_PATH : null,
 							closest: () => ({ textContent: mockState.author + " Subscriber Count" })
@@ -281,7 +358,8 @@
 				return originalQuerySelectorAll.call(document, selector);
 			};
 
-			async function simulateNavigation(config) {
+			async function simulateNavigation(config)
+			{
 				mockState.videoId = config.videoId;
 				mockState.channelId = config.channelId;
 				mockState.author = config.author;
@@ -293,7 +371,7 @@
 
 				history.pushState({}, "", `/watch?v=${config.videoId}`);
 				window.dispatchEvent(new CustomEvent("yt-navigate-finish"));
-				
+
 				// Yield thread execution to allow the script's polling ticks (150ms intervals) to evaluate
 				await new Promise(resolve => setTimeout(resolve, 400));
 			}
@@ -334,7 +412,7 @@
 			// TEST A: Music video going to normal video and back
 			// ------------------------------------------------------------
 			console.log("[EfYT-ChSpeed] %c  [Test A] Transitioning: Music Video (1x) → Normal Video (Default) → Music Video (1x) ", "color:#00bcd4; font-weight:bold;");
-			
+
 			await simulateNavigation(mockMusicVideo);
 			assert(mockState.playbackRate === 1.0, "M1 (Music Video) successfully resolved to 1.0x (music override)");
 
@@ -382,38 +460,188 @@
 			history.replaceState({}, "", originalUrl);
 			console.log("[EfYT-ChSpeed] %c[SPA Mocks] Restored native DOM functions and browser URL.", "color:#e6c229; font-style:italic;");
 
-		} catch (error) {
+		} catch (error)
+		{
 			console.error("[EfYT-ChSpeed] An error occurred during SPA transition testing:", error);
 			results.failed++;
 		}
 
-	} catch (error) {
+		// ============================================================
+		// 8. BACKGROUND TAB REGRESSION TESTS (v46 hidden-tab fix)
+		// ============================================================
+		printSectionHeader("8", "BACKGROUND TAB REGRESSION TESTS (v46 hidden-tab fix)", "#3f51b5");
+		try
+		{
+			console.log("[EfYT-ChSpeed] %c[BG Mocks] Setting up a video that 'loads in a background tab'...", "color:#e6c229; font-weight:bold;");
+
+			const originalGetElementById2 = document.getElementById;
+			const originalQuerySelector2 = document.querySelector;
+			const originalQuerySelectorAll2 = document.querySelectorAll;
+			const originalUrl2 = window.location.href;
+
+			// Shadow the native (read-only) document.hidden with a controllable
+			// own-property so we can flip visibility state on demand.
+			let hiddenOverride = true; // tab starts backgrounded, like a link opened in a new tab
+			Object.defineProperty(document, "hidden", {
+				configurable: true,
+				get() { return hiddenOverride; }
+			});
+
+			const bgChannelId = "ch_bg_regression_test";
+			const bgVideoId = "test_bg_regression_vid";
+			const bgCustomSpeed = 1.75;
+			const globalDefaultSpeed = window.efytSpeed.getEfytDefaultSpeed();
+
+			// A real, document-connected <div id="movie_player"> containing a
+			// real <video>, so a genuinely bubbling "ratechange" reaches the
+			// capturing listener on `window` exactly like on the live page.
+			const bgPlayerEl = document.createElement("div");
+			bgPlayerEl.id = "movie_player";
+			bgPlayerEl.style.cssText = "position:fixed;width:0;height:0;overflow:hidden;";
+			const bgVideoEl = document.createElement("video");
+			// A real <video> with no source reports readyState 0 (HAVE_NOTHING)
+			// forever, which would permanently trip the ad/ready gate and mask
+			// whether the hidden-tab fix works. Spoof a "loaded" state instead.
+			Object.defineProperty(bgVideoEl, "readyState", { configurable: true, get: () => 4 });
+			bgPlayerEl.appendChild(bgVideoEl);
+			document.body.appendChild(bgPlayerEl);
+
+			bgPlayerEl.getPlayerResponse = () => ({
+				videoDetails: {
+					videoId: bgVideoId,
+					channelId: bgChannelId,
+					author: "BG Regression Channel",
+					title: "Just a Regular Upload"
+				},
+				microformat: { playerMicroformatRenderer: { category: "People & Blogs" } }
+			});
+			bgPlayerEl.getAdState = () => 0;
+
+			document.getElementById = function (id)
+			{
+				if (id === "movie_player") return bgPlayerEl;
+				if (id === "efyt-speed-plus" || id === "efyt-speed-minus") return { click: () => { } };
+				return originalGetElementById2.call(document, id);
+			};
+
+			document.querySelector = function (selector)
+			{
+				if (selector === "video") return bgVideoEl;
+				if (selector === "ytd-watch-flexy") return { getAttribute: (attr) => attr === "video-id" ? bgVideoId : null };
+				if (selector.startsWith("ytd-channel-name")) return { textContent: "BG Regression Channel" };
+				if (selector.includes("h1")) return { textContent: "Just a Regular Upload" };
+				if (selector.startsWith("#owner")) return { textContent: "BG Regression Channel Subscriber Count" };
+				if (selector === ".ad-showing, .ad-interrupting") return null;
+				return originalQuerySelector2.call(document, selector);
+			};
+
+			// Deterministically report "no artist badges" so isMusicCategory()
+			// can't accidentally pick up real badges from the actual page.
+			document.querySelectorAll = function (selector)
+			{
+				if (selector.includes("badge") || selector.includes("verified-artist") || selector.includes("path")) return [];
+				return originalQuerySelectorAll2.call(document, selector);
+			};
+
+			// Give this channel a persisted, non-default override before the
+			// video ever loads — mirroring a returning viewer's preference.
+			// NOTE: seed localStorage directly rather than via
+			// window.efytSpeed.saveChannelSpeed(), which also immediately
+			// calls stepToSpeed() and would apply the rate to bgVideoEl right
+			// away — defeating the "never applied while hidden" sanity check
+			// below regardless of whether the hidden-tab fix works.
+			localStorage.setItem(EFYT_PREFIX + bgChannelId, JSON.stringify({ speed: bgCustomSpeed, name: "BG Regression Channel" }));
+
+			// Navigate while the tab is already hidden. The poll loop should
+			// never reach evaluateCurrentPage() while document.hidden is true.
+			history.pushState({}, "", `/watch?v=${bgVideoId}`);
+			window.dispatchEvent(new CustomEvent("yt-navigate-finish"));
+
+			// Wait past the old hardcoded 5s safety cutoff. Pre-fix, this
+			// window alone was enough for clearPolling() to fire and flip
+			// suppressSave back to false while still backgrounded.
+			console.log("[EfYT-ChSpeed] %c  Waiting ~5.5s in the background to cross the old safety-cutoff window...", "color:#00bcd4;");
+			await new Promise(resolve => setTimeout(resolve, 5500));
+
+			assert(bgVideoEl.playbackRate !== bgCustomSpeed, "Sanity: speed was never applied while the tab stayed hidden (still at native default)");
+
+			// Simulate the underlying player (or EfYT's own base logic)
+			// quietly resetting the rate to the global default while still
+			// backgrounded — the exact trigger from the bug report's log.
+			bgVideoEl.playbackRate = globalDefaultSpeed;
+			bgVideoEl.dispatchEvent(new Event("ratechange", { bubbles: true }));
+			await new Promise(resolve => setTimeout(resolve, 50));
+
+			assert(
+				window.efytSpeed.loadChannelSpeed(bgChannelId) === bgCustomSpeed,
+				`Saved override (${bgCustomSpeed}x) survives a stray ratechange fired while document.hidden is true`
+			);
+
+			// Bringing the tab to the foreground should re-arm polling and
+			// apply the surviving saved speed, not a wiped-out default.
+			hiddenOverride = false;
+			document.dispatchEvent(new Event("visibilitychange"));
+			await new Promise(resolve => setTimeout(resolve, 400));
+
+			assert(bgVideoEl.playbackRate === bgCustomSpeed, `Foregrounding the tab correctly applies the surviving ${bgCustomSpeed}x override, not the ${globalDefaultSpeed}x default`);
+
+			// Cleanup
+			document.getElementById = originalGetElementById2;
+			document.querySelector = originalQuerySelector2;
+			document.querySelectorAll = originalQuerySelectorAll2;
+			delete document.hidden;
+			history.replaceState({}, "", originalUrl2);
+			bgPlayerEl.remove();
+			window.efytSpeed.clearSpeed(bgChannelId);
+			console.log("[EfYT-ChSpeed] %c[BG Mocks] Restored native DOM functions and browser URL.", "color:#e6c229; font-style:italic;");
+
+		} catch (error)
+		{
+			console.error("[EfYT-ChSpeed] An error occurred during background tab regression testing:", error);
+			results.failed++;
+			try { delete document.hidden; } catch { }
+		}
+
+	} catch (error)
+	{
 		console.error("[EfYT-ChSpeed] An unexpected error occurred during test suite execution:", error);
 		results.failed++;
-	} finally {
+	} finally
+	{
 		// ============================================================
 		// CLEANUP & ENVIRONMENT RESTORATION (USING HELPER FUNCTIONS)
 		// ============================================================
-		
+
+		// 0. Remove the untrusted-keyboard-event guard installed before Section 7
+		if (removeUntrustedKeyGuard)
+		{
+			removeUntrustedKeyGuard();
+		}
+
 		// 1. Reset physical playback rate using the helper function first
-		if (originalChannelId && originalSpeed !== null) {
+		if (originalChannelId && originalSpeed !== null)
+		{
 			window.efytSpeed.saveChannelSpeed(originalSpeed, originalChannelId);
 			console.log(`[EfYT-ChSpeed] %c[Backup] Restored active channel speed to ${originalSpeed}x via saveChannelSpeed().`, "color:#aaa; font-style:italic;");
 		}
 
 		// 2. Remove any transient configurations generated during active test assertions
 		const currentKeys = [];
-		for (let i = 0; i < localStorage.length; i++) {
+		for (let i = 0; i < localStorage.length; i++)
+		{
 			currentKeys.push(localStorage.key(i));
 		}
-		currentKeys.forEach(key => {
-			if (key && key.startsWith(EFYT_PREFIX)) {
+		currentKeys.forEach(key =>
+		{
+			if (key && key.startsWith(EFYT_PREFIX))
+			{
 				localStorage.removeItem(key);
 			}
 		});
 
 		// 3. Re-inject original localStorage speed data configurations
-		for (const [key, value] of Object.entries(backupData)) {
+		for (const [key, value] of Object.entries(backupData))
+		{
 			localStorage.setItem(key, value);
 		}
 		console.log("[EfYT-ChSpeed] %c[Backup] Restored existing channel speed configurations.", "color:#aaa; font-style:italic;");

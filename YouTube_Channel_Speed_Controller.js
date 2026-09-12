@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v46)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v47)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -115,7 +115,7 @@
 	const warn = (...args) => console.warn(LOG_PREFIX, ...args);
 	const err = (...args) => console.error(LOG_PREFIX, ...args);
 
-	const textIncludesNormalized = (sourceText, targetText) => 
+	const textIncludesNormalized = (sourceText, targetText) =>
 		!!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
 
 	const isArtistSvgPath = (d) =>
@@ -149,12 +149,12 @@
 		?? document.querySelector(SELECTORS.channelName)?.textContent?.trim()
 		?? "Unknown Channel";
 
-	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) => 
+	const fetchVideoTitle = (playerResponse = fetchPlayerResponse()) =>
 		playerResponse?.videoDetails?.title
 		?? document.querySelector(SELECTORS.videoTitle)?.textContent?.trim()
 		?? "";
 
-	const checkDomSettledForChannel = (expectedChannelName) => 
+	const checkDomSettledForChannel = (expectedChannelName) =>
 		expectedChannelName ? textIncludesNormalized(document.querySelector(SELECTORS.ownerContainer)?.textContent, expectedChannelName) : false;
 
 	const isAdPlaying = () =>
@@ -195,7 +195,7 @@
 	};
 
 	const checkTitleMatchesMusicKeyword = (videoTitle) => videoTitle ? TITLE_KEYWORDS_REGEX.test(videoTitle) : false;
-	
+
 	const checkOfficialArtistChannel = (expectedChannelName) =>
 	{
 		const badges = document.querySelectorAll(SELECTORS.artistBadges);
@@ -209,10 +209,10 @@
 	function isMusicCategory(playerResponse = fetchPlayerResponse())
 	{
 		if (playerResponse?.microformat?.playerMicroformatRenderer?.category?.toLowerCase() === "music") return true;
-		
+
 		const authorName = playerResponse?.videoDetails?.author;
 		if (checkOfficialArtistChannel(authorName) || checkArtistBadgeSvg(authorName)) return true;
-		
+
 		const videoTitle = fetchVideoTitle(playerResponse);
 		return checkTitleMatchesMusicKeyword(videoTitle);
 	}
@@ -220,10 +220,10 @@
 	async function verifyMixIsMusic(videoId)
 	{
 		if (!videoId || !window.ytcfg?.get) return null;
-		
+
 		const innerTubeApiKey = window.ytcfg.get("INNERTUBE_API_KEY");
 		const innerTubeContext = window.ytcfg.get("INNERTUBE_CONTEXT");
-		
+
 		if (!innerTubeApiKey || !innerTubeContext) return null;
 
 		const apiEndpoint = `https://www.youtube.com/youtubei/v1/next?key=${innerTubeApiKey}`;
@@ -231,24 +231,24 @@
 		state.abortMixCheck();
 		const abortController = new AbortController();
 		state.mixAbortController = abortController;
-		
+
 		const fetchTimeoutId = setTimeout(() => abortController.abort(), MIX_CHECK_TIMEOUT_MS);
 
 		try
 		{
 			const networkResponse = await fetch(apiEndpoint,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ context: innerTubeContext, videoId, playlistId: "RD" + videoId }),
-				signal: abortController.signal,
-			});
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ context: innerTubeContext, videoId, playlistId: "RD" + videoId }),
+					signal: abortController.signal,
+				});
 
 			if (!networkResponse.ok) return null;
-			
+
 			const responseData = await networkResponse.json();
 			const playlistContents = responseData?.contents?.twoColumnWatchNextResults?.playlist?.playlist?.contents ?? [];
-			
+
 			const activeVideoData = playlistContents.find(playlistItem => playlistItem?.playlistPanelVideoRenderer?.videoId === videoId);
 			const playerParameters = activeVideoData?.playlistPanelVideoRenderer?.navigationEndpoint?.watchEndpoint?.playerParams;
 
@@ -302,7 +302,7 @@
 	function saveChannelSpeed(channelId, targetSpeed, channelName)
 	{
 		if (!channelId) return;
-		
+
 		const defaultEfytSpeed = getEfytDefaultSpeed();
 		const resolvedChannelName = channelName || channelId;
 
@@ -332,15 +332,15 @@
 	{
 		const eventTarget = document.activeElement || document.body;
 		const eventOptions =
-			{
-				key: key,
-				code: code,
-				keyCode: keyCode,
-				which: keyCode,
-				shiftKey: true,
-				bubbles: true,
-				cancelable: true
-			};
+		{
+			key: key,
+			code: code,
+			keyCode: keyCode,
+			which: keyCode,
+			shiftKey: true,
+			bubbles: true,
+			cancelable: true
+		};
 
 		eventTarget.dispatchEvent(new KeyboardEvent("keydown", eventOptions));
 		eventTarget.dispatchEvent(new KeyboardEvent("keyup", eventOptions));
@@ -419,12 +419,12 @@
 	{
 		state.suppressSave = true;
 		clearTimeout(state.timers.suppress);
-		
+
 		stepToSpeed(targetPlaybackRate);
-		
+
 		state.timers.suppress = setTimeout(() => 
-		{ 
-			state.suppressSave = false; 
+		{
+			state.suppressSave = false;
 		}, SUPPRESS_RESET_MS);
 	}
 
@@ -482,12 +482,12 @@
 
 		const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(exportedData, null, 2)], { type: "application/json" }));
 		const downloadAnchor = Object.assign(document.createElement("a"), { href: blobUrl, download: `efyt-channel-speeds_${new Date().toISOString().replace(/[:.]/g, "-")}.json` });
-		
+
 		document.body.appendChild(downloadAnchor);
 		downloadAnchor.click();
 		downloadAnchor.remove();
 		URL.revokeObjectURL(blobUrl);
-		
+
 		log(`Exported ${Object.keys(exportedData).length} channel(s)`);
 		return exportedData;
 	}
@@ -500,30 +500,30 @@
 		const overlayButton = document.createElement("button");
 		overlayButton.id = OVERLAY_ID;
 		overlayButton.textContent = "📂 Click to choose EfYT speeds JSON";
-		
+
 		Object.assign(overlayButton.style,
-		{
-			position: "fixed",
-			top: "16px",
-			right: "16px",
-			zIndex: "999999",
-			padding: "40px 56px",
-			background: "#065fd4",
-			color: "#fff",
-			border: "none",
-			borderRadius: "24px",
-			fontSize: "52px",
-			cursor: "pointer",
-			boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
-		});
+			{
+				position: "fixed",
+				top: "16px",
+				right: "16px",
+				zIndex: "999999",
+				padding: "40px 56px",
+				background: "#065fd4",
+				color: "#fff",
+				border: "none",
+				borderRadius: "24px",
+				fontSize: "52px",
+				cursor: "pointer",
+				boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
+			});
 
 		const fileInput = Object.assign(document.createElement("input"),
-		{
-			type: "file",
-			accept: ".json,application/json",
-			style: "display:none"
-		});
-		
+			{
+				type: "file",
+				accept: ".json,application/json",
+				style: "display:none"
+			});
+
 		const cleanupElements = () =>
 		{
 			overlayButton.remove();
@@ -537,14 +537,14 @@
 			if (!selectedFile || (selectedFile.type !== "application/json" && !selectedFile.name.endsWith(".json"))) return err("Import failed — invalid file type.");
 
 			const fileReader = new FileReader();
-			
+
 			fileReader.onload = () =>
 			{
 				try
 				{
 					const parsedData = JSON.parse(fileReader.result);
 					let importedCount = 0;
-					
+
 					for (const [channelId, channelData] of Object.entries(parsedData))
 					{
 						if (channelData?.speed > 0)
@@ -568,7 +568,7 @@
 			cleanupElements();
 			fileInput.click();
 		});
-		
+
 		document.body.append(overlayButton, fileInput);
 		setTimeout(cleanupElements, 8000);
 		log("Click the blue button in the top-right corner to select a file.");
@@ -584,11 +584,29 @@
 		state.suppressSave = false;
 	}
 
+	// NOTE: Unlike a plain setTimeout(clearPolling, delay), this reschedules
+	// itself while the tab is hidden instead of firing early and clearing
+	// suppressSave mid-background-load, which previously let a stray
+	// ratechange event wipe out a saved channel speed.
+	function scheduleCutoff(delay = 5000)
+	{
+		clearTimeout(state.timers.cutoff);
+		state.timers.cutoff = setTimeout(() =>
+		{
+			if (document.hidden)
+			{
+				scheduleCutoff(delay);
+				return;
+			}
+			clearPolling();
+		}, delay);
+	}
+
 	function evaluateCurrentPage()
 	{
 		const playerResponse = fetchPlayerResponse();
 		const activeVideoId = fetchWatchVideoId(playerResponse);
-		
+
 		if (!activeVideoId)
 		{
 			if (state.activeVideoId !== null) state.resetSession();
@@ -604,15 +622,14 @@
 		}
 
 		const videoElement = getMoviePlayer()?.querySelector(SELECTORS.videoElement) || document.querySelector(SELECTORS.videoElement);
-		
+
 		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById(SELECTORS.speedUpBtn)) return;
 
 		// --- AD & MEDIA READY GATE SAFETY COVERS ---
 		// Postpone the safety cutoff timer and return early if media state is unsafe
 		if (isAdPlaying() || videoElement.readyState < 2)
 		{
-			clearTimeout(state.timers.cutoff);
-			state.timers.cutoff = setTimeout(clearPolling, 5000);
+			scheduleCutoff(5000);
 			return;
 		}
 
@@ -624,9 +641,9 @@
 			{
 				state.lastChannelId = channelId;
 				state.lastChannelName = fetchChannelName(playerResponse);
-				
+
 				const targetSpeed = loadChannelSpeed(channelId) ?? getEfytDefaultSpeed();
-				
+
 				log(`Applying speed ${targetSpeed}x for ${state.lastChannelName}`);
 				applySpeedWithSuppress(targetSpeed);
 				state.speedApplied = true;
@@ -691,7 +708,7 @@
 		};
 
 		pollForElements();
-		state.timers.cutoff = setTimeout(clearPolling, 5000);
+		scheduleCutoff(5000);
 	}
 
 	// ============================================================
@@ -699,8 +716,11 @@
 	// ============================================================
 	function onRateChange(event)
 	{
-		if (state.suppressSave || isAdPlaying()) return;
-		
+		// Ignore rate changes that fire while the tab is backgrounded — these
+		// are never a deliberate user action and were previously able to
+		// overwrite (and delete) a saved per-channel speed.
+		if (state.suppressSave || isAdPlaying() || document.hidden) return;
+
 		const videoElement = event.target;
 		if (videoElement.tagName !== "VIDEO" || !videoElement.closest("#" + SELECTORS.moviePlayer)) return;
 
@@ -711,7 +731,7 @@
 		if (isMusicCategory(playerResponse)) return;
 
 		const targetChannelId = state.lastChannelId || fetchChannelId(playerResponse);
-		
+
 		if (targetChannelId)
 		{
 			const storedChannelSpeed = loadChannelSpeed(targetChannelId) ?? getEfytDefaultSpeed();
@@ -735,7 +755,7 @@
 
 		const playerResponse = fetchPlayerResponse();
 		const currentVideoId = fetchWatchVideoId(playerResponse);
-		
+
 		if (!currentVideoId)
 		{
 			clearPolling();
@@ -852,7 +872,7 @@
 		{
 			const targetChannelId = channelId || fetchChannelId();
 			const savedSpeed = loadChannelSpeed(targetChannelId);
-			
+
 			log(`Saved speed for ${state.lastChannelName || targetChannelId}:`, savedSpeed ? savedSpeed + "x" : "(none)");
 			return savedSpeed;
 		},
@@ -862,7 +882,7 @@
 			const playerResponse = fetchPlayerResponse();
 			const targetChannelId = channelId || fetchChannelId(playerResponse);
 			if (!targetChannelId) return warn("No channel detected.");
-			
+
 			saveChannelSpeed(targetChannelId, targetSpeed, state.lastChannelName || fetchChannelName(playerResponse));
 			stepToSpeed(targetSpeed);
 		},
@@ -872,7 +892,7 @@
 			const playerResponse = fetchPlayerResponse();
 			const targetChannelId = channelId || fetchChannelId(playerResponse);
 			if (!targetChannelId) return warn("No channel detected.");
-			
+
 			localStorage.removeItem(CH_PREFIX + targetChannelId);
 			log(`Cleared speed for ${state.lastChannelName || fetchChannelName(playerResponse)}.`);
 		},
@@ -902,8 +922,8 @@
 		help()
 		{
 			console.log
-			(
-				`%c[EfYT-ChSpeed] Commands:
+				(
+					`%c[EfYT-ChSpeed] Commands:
 
 %cDetection
 %c  efytSpeed.isMusicCategory()                 → true if any detection layer matches
@@ -931,18 +951,18 @@
 
 %cMisc
 %c  efytSpeed.refresh()                         → manually re-run detection now`,
-				"color:#fff;font-weight:bold",
-				"color:#8ab4f8;font-weight:bold",
-				"color:#ccc",
-				"color:#8ab4f8;font-weight:bold",
-				"color:#ccc",
-				"color:#8ab4f8;font-weight:bold",
-				"color:#ccc",
-				"color:#8ab4f8;font-weight:bold",
-				"color:#ccc",
-				"color:#8ab4f8;font-weight:bold",
-				"color:#ccc"
-			);
+					"color:#fff;font-weight:bold",
+					"color:#8ab4f8;font-weight:bold",
+					"color:#ccc",
+					"color:#8ab4f8;font-weight:bold",
+					"color:#ccc",
+					"color:#8ab4f8;font-weight:bold",
+					"color:#ccc",
+					"color:#8ab4f8;font-weight:bold",
+					"color:#ccc",
+					"color:#8ab4f8;font-weight:bold",
+					"color:#ccc"
+				);
 		}
 	};
 
