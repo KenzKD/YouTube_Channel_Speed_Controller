@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v47)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v48)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -18,6 +18,7 @@
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
+	const STEP_DELAY_MS = 50;
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX = "efyt_ch_speed::";
@@ -114,6 +115,7 @@
 	const log = (...args) => console.log(LOG_PREFIX, ...args);
 	const warn = (...args) => console.warn(LOG_PREFIX, ...args);
 	const err = (...args) => console.error(LOG_PREFIX, ...args);
+	const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 	const textIncludesNormalized = (sourceText, targetText) =>
 		!!(sourceText && targetText && sourceText.toLowerCase().replace(/\s+/g, " ").trim().includes(targetText.toLowerCase().replace(/\s+/g, " ").trim()));
@@ -356,7 +358,7 @@
 		dispatchSpeedKey("<", "Comma", 188);
 	}
 
-	function stepToSpeed(targetPlaybackRate)
+	async function stepToSpeed(targetPlaybackRate)
 	{
 		const videoElement = document.querySelector(SELECTORS.videoElement);
 		if (!videoElement) return false;
@@ -376,6 +378,8 @@
 			}
 
 			if (videoElement.playbackRate === previousPlaybackRate) break;
+
+			await sleep(STEP_DELAY_MS);
 		}
 
 		if (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001)
@@ -388,6 +392,8 @@
 				attemptCount = 0;
 				while (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001 && attemptCount++ < 30)
 				{
+					await sleep(STEP_DELAY_MS);
+
 					const previousPlaybackRate = videoElement.playbackRate;
 
 					if (targetPlaybackRate > previousPlaybackRate)
@@ -415,12 +421,12 @@
 		return Math.abs(videoElement.playbackRate - targetPlaybackRate) < 0.001;
 	}
 
-	function applySpeedWithSuppress(targetPlaybackRate)
+	async function applySpeedWithSuppress(targetPlaybackRate)
 	{
 		state.suppressSave = true;
 		clearTimeout(state.timers.suppress);
 
-		stepToSpeed(targetPlaybackRate);
+		await stepToSpeed(targetPlaybackRate);
 
 		state.timers.suppress = setTimeout(() => 
 		{
@@ -642,7 +648,13 @@
 				state.lastChannelId = channelId;
 				state.lastChannelName = fetchChannelName(playerResponse);
 
-				const targetSpeed = loadChannelSpeed(channelId) ?? getEfytDefaultSpeed();
+				const savedSpeed = loadChannelSpeed(channelId);
+				const targetSpeed = savedSpeed ?? getEfytDefaultSpeed();
+
+				if (savedSpeed === null)
+				{
+					log(`No saved override for ${state.lastChannelName} — using default speed ${targetSpeed}x`);
+				}
 
 				log(`Applying speed ${targetSpeed}x for ${state.lastChannelName}`);
 				applySpeedWithSuppress(targetSpeed);
