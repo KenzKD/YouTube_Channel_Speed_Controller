@@ -602,6 +602,191 @@
 			try { delete document.hidden; } catch { }
 		}
 
+		// ============================================================
+		// 9. LIVE STREAM DETECTION TESTS
+		// ============================================================
+		printSectionHeader("9", "LIVE STREAM DETECTION TESTS", "#f44336");
+		{
+			const originalGetElementById3 = document.getElementById;
+			const originalQuerySelector3 = document.querySelector;
+			const originalQuerySelectorAll3 = document.querySelectorAll;
+			const originalUrl3 = window.location.href;
+			let liveTestPlayerEl = null;
+
+			try
+			{
+				console.log("[EfYT-ChSpeed] %c[Live Mocks] Setting up simulated live stream environment...", "color:#e6c229; font-weight:bold;");
+
+				const liveChannelId = "ch_live_regression_test";
+				const liveChannelName = "Live Regression Channel";
+				const liveCustomSpeed = 1.75;
+
+				// Mutable description of what the mocked player "is playing".
+				const liveConfig =
+				{
+					videoId: "",
+					title: "Late Night Chat Stream",
+					category: "People & Blogs",
+					isLive: false,
+					isLowLatencyLiveStream: false,
+					videoDataIsLive: false
+				};
+
+				liveTestPlayerEl = document.createElement("div");
+				liveTestPlayerEl.id = "movie_player";
+				liveTestPlayerEl.style.cssText = "position:fixed;width:0;height:0;overflow:hidden;";
+
+				const liveVideoEl = document.createElement("video");
+				// A source-less <video> reports readyState 0 forever, which would
+				// permanently trip the ad/ready gate. Spoof a "loaded" state.
+				Object.defineProperty(liveVideoEl, "readyState", { configurable: true, get: () => 4 });
+				liveTestPlayerEl.appendChild(liveVideoEl);
+				document.body.appendChild(liveTestPlayerEl);
+
+				liveTestPlayerEl.getPlayerResponse = () => (
+					{
+						videoDetails:
+						{
+							videoId: liveConfig.videoId,
+							channelId: liveChannelId,
+							author: liveChannelName,
+							title: liveConfig.title,
+							isLive: liveConfig.isLive,
+							isLowLatencyLiveStream: liveConfig.isLowLatencyLiveStream
+						},
+						microformat: { playerMicroformatRenderer: { category: liveConfig.category } }
+					});
+				liveTestPlayerEl.getAdState = () => 0;
+				liveTestPlayerEl.getVideoData = () => ({ isLive: liveConfig.videoDataIsLive });
+
+				document.getElementById = function (id)
+				{
+					if (id === "movie_player") return liveTestPlayerEl;
+					if (id === "efyt-speed-plus" || id === "efyt-speed-minus") return { click: () => { } };
+					return originalGetElementById3.call(document, id);
+				};
+
+				document.querySelector = function (selector)
+				{
+					if (selector === "video") return liveVideoEl;
+					if (selector === "ytd-watch-flexy") return { getAttribute: (attr) => attr === "video-id" ? liveConfig.videoId : null };
+					if (selector.startsWith("ytd-channel-name")) return { textContent: liveChannelName };
+					if (selector.includes("h1")) return { textContent: liveConfig.title };
+					if (selector.startsWith("#owner")) return { textContent: liveChannelName + " Subscriber Count" };
+					if (selector === ".ad-showing, .ad-interrupting") return null;
+					return originalQuerySelector3.call(document, selector);
+				};
+
+				document.querySelectorAll = function (selector)
+				{
+					if (selector.includes("badge") || selector.includes("verified-artist") || selector.includes("path")) return [];
+					return originalQuerySelectorAll3.call(document, selector);
+				};
+
+				async function simulateLiveNavigation(overrides, initialPlaybackRate = 1.0)
+				{
+					Object.assign(liveConfig,
+						{
+							title: "Late Night Chat Stream",
+							category: "People & Blogs",
+							isLive: false,
+							isLowLatencyLiveStream: false,
+							videoDataIsLive: false
+						}, overrides);
+
+					if (liveVideoEl.playbackRate !== initialPlaybackRate)
+					{
+						liveVideoEl.playbackRate = initialPlaybackRate;
+					}
+
+					history.pushState({}, "", `/watch?v=${liveConfig.videoId}`);
+					window.dispatchEvent(new CustomEvent("yt-navigate-finish"));
+					await new Promise(resolve => setTimeout(resolve, 400));
+				}
+
+				window.efytSpeed.clearAll();
+				// Seed directly so no speed is applied to the element yet.
+				localStorage.setItem(EFYT_PREFIX + liveChannelId, JSON.stringify({ speed: liveCustomSpeed, name: liveChannelName }));
+
+				// ------------------------------------------------------------
+				// TEST A: isLiveStream() unit checks for each detection layer
+				// ------------------------------------------------------------
+				console.log("[EfYT-ChSpeed] %c  [Test A] isLiveStream() detection layers", "color:#00bcd4; font-weight:bold;");
+
+				assert(typeof window.efytSpeed.isLiveStream === "function", "efytSpeed.isLiveStream() is exposed on the diagnostic API");
+
+				Object.assign(liveConfig, { videoId: "test_live_unit_vid", isLive: false, isLowLatencyLiveStream: false, videoDataIsLive: false });
+				assert(window.efytSpeed.isLiveStream() === false, "isLiveStream() returns false for a regular upload / finished stream (all flags false)");
+
+				Object.assign(liveConfig, { isLive: true, isLowLatencyLiveStream: false, videoDataIsLive: false });
+				assert(window.efytSpeed.isLiveStream() === true, "isLiveStream() returns true when videoDetails.isLive is true");
+
+				Object.assign(liveConfig, { isLive: false, isLowLatencyLiveStream: true, videoDataIsLive: false });
+				assert(window.efytSpeed.isLiveStream() === true, "isLiveStream() returns true when videoDetails.isLowLatencyLiveStream is true");
+
+				Object.assign(liveConfig, { isLive: false, isLowLatencyLiveStream: false, videoDataIsLive: true });
+				assert(window.efytSpeed.isLiveStream() === true, "isLiveStream() falls back to getVideoData().isLive when player response flags are false");
+
+				// ------------------------------------------------------------
+				// TEST B: Live stream is left completely untouched on navigation
+				// ------------------------------------------------------------
+				console.log("[EfYT-ChSpeed] %c  [Test B] Navigation: Live Stream is not modified", "color:#00bcd4; font-weight:bold;");
+
+				await simulateLiveNavigation({ videoId: "test_live_vid_1", isLive: true }, 1.0);
+				assert(liveVideoEl.playbackRate === 1.0, `Live stream stayed at 1.0x despite a saved ${liveCustomSpeed}x override for its channel`);
+
+				await simulateLiveNavigation({ videoId: "test_live_vid_2", isLowLatencyLiveStream: true }, 1.0);
+				assert(liveVideoEl.playbackRate === 1.0, "Low-latency live stream stayed at 1.0x (no channel or default speed applied)");
+
+				await simulateLiveNavigation({ videoId: "test_live_vid_3", videoDataIsLive: true }, 1.0);
+				assert(liveVideoEl.playbackRate === 1.0, "Live stream detected only via getVideoData() stayed at 1.0x");
+
+				await simulateLiveNavigation({ videoId: "test_live_vid_4", isLive: true, category: "Music" }, 1.25);
+				assert(liveVideoEl.playbackRate === 1.25, "Live music stream was not touched (no music override applied, rate left at 1.25x)");
+
+				// ------------------------------------------------------------
+				// TEST C: Manual speed changes on a live stream are never saved
+				// ------------------------------------------------------------
+				console.log("[EfYT-ChSpeed] %c  [Test C] ratechange on a live stream does not persist", "color:#00bcd4; font-weight:bold;");
+
+				await simulateLiveNavigation({ videoId: "test_live_vid_5", isLive: true }, 1.0);
+				liveVideoEl.playbackRate = 1.5;
+				liveVideoEl.dispatchEvent(new Event("ratechange", { bubbles: true }));
+				await new Promise(resolve => setTimeout(resolve, 100));
+
+				assert(
+					window.efytSpeed.loadChannelSpeed(liveChannelId) === liveCustomSpeed,
+					`Saved ${liveCustomSpeed}x override was not overwritten by a manual speed change on a live stream`
+				);
+
+				// ------------------------------------------------------------
+				// TEST D: A finished stream (VOD replay) still gets the channel speed
+				// ------------------------------------------------------------
+				console.log("[EfYT-ChSpeed] %c  [Test D] Live Stream → VOD replay of the same channel", "color:#00bcd4; font-weight:bold;");
+
+				await simulateLiveNavigation({ videoId: "test_live_vod_1", isLive: false }, 1.0);
+				assert(liveVideoEl.playbackRate === liveCustomSpeed, `VOD replay (isLive false) correctly applied the channel's ${liveCustomSpeed}x override`);
+
+				await simulateLiveNavigation({ videoId: "test_live_vid_6", isLive: true }, 1.0);
+				assert(liveVideoEl.playbackRate === 1.0, "Navigating from a VOD back to a live stream leaves the live stream at 1.0x");
+			}
+			catch (error)
+			{
+				console.error("[EfYT-ChSpeed] An error occurred during live stream detection testing:", error);
+				results.failed++;
+			}
+			finally
+			{
+				document.getElementById = originalGetElementById3;
+				document.querySelector = originalQuerySelector3;
+				document.querySelectorAll = originalQuerySelectorAll3;
+				history.replaceState({}, "", originalUrl3);
+				if (liveTestPlayerEl) liveTestPlayerEl.remove();
+				window.efytSpeed.clearSpeed("ch_live_regression_test");
+				console.log("[EfYT-ChSpeed] %c[Live Mocks] Restored native DOM functions and browser URL.", "color:#e6c229; font-style:italic;");
+			}
+		}
+
 	} catch (error)
 	{
 		console.error("[EfYT-ChSpeed] An unexpected error occurred during test suite execution:", error);

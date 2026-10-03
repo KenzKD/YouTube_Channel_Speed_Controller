@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v48)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v49)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -167,6 +167,14 @@
 			player?.getAdState?.() > 0 ||
 			document.querySelector(SELECTORS.adContainers)
 		);
+	};
+
+	const isLiveStream = (playerResponse = fetchPlayerResponse()) =>
+	{
+		if (playerResponse?.videoDetails?.isLive === true) return true;
+		if (playerResponse?.videoDetails?.isLowLatencyLiveStream === true) return true;
+
+		return getMoviePlayer()?.getVideoData?.()?.isLive === true;
 	};
 
 	// ============================================================
@@ -631,6 +639,20 @@
 
 		if (!videoElement || !playerResponse || playerResponse.videoDetails?.videoId !== activeVideoId || !document.getElementById(SELECTORS.speedUpBtn)) return;
 
+		// --- LIVE STREAM GATE ---
+		// Live streams are left at YouTube's default 1x, so do nothing.
+		if (isLiveStream(playerResponse))
+		{
+			if (!state.speedApplied || !state.musicChecked)
+			{
+				log(`Live stream detected (${activeVideoId}) — skipping speed handling.`);
+			}
+
+			state.speedApplied = state.musicChecked = true;
+			clearPolling();
+			return;
+		}
+
 		// --- AD & MEDIA READY GATE SAFETY COVERS ---
 		// Postpone the safety cutoff timer and return early if media state is unsafe
 		if (isAdPlaying() || videoElement.readyState < 2)
@@ -740,6 +762,8 @@
 		const activeVideoId = fetchWatchVideoId(playerResponse);
 		if (!activeVideoId || activeVideoId !== state.activeVideoId) return;
 
+		if (isLiveStream(playerResponse)) return;
+
 		if (isMusicCategory(playerResponse)) return;
 
 		const targetChannelId = state.lastChannelId || fetchChannelId(playerResponse);
@@ -827,6 +851,13 @@
 			const channelId = fetchChannelId();
 			log("Channel ID:", channelId);
 			return channelId;
+		},
+
+		isLiveStream()
+		{
+			const isLive = isLiveStream();
+			log("Live stream detected:", isLive);
+			return isLive;
 		},
 
 		checkOfficialArtistChannel()
@@ -939,6 +970,7 @@
 
 %cDetection
 %c  efytSpeed.isMusicCategory()                 → true if any detection layer matches
+  efytSpeed.isLiveStream()                    → true if the current video is a live stream
   efytSpeed.checkOfficialArtistChannel()      → checks badge selectors only
   efytSpeed.checkArtistBadgeSvg()             → checks badge SVG icon
   efytSpeed.fetchVideoTitle()                 → current video title
