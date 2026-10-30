@@ -1,5 +1,5 @@
 // ============================================================
-// Enhancer for YouTube™ — Remember Speed Per Channel (v49)
+// Enhancer for YouTube™ — Remember Speed Per Channel (v50)
 // Paste this into: EfYT Options → Custom Script
 // ============================================================
 
@@ -18,7 +18,7 @@
 
 	const SUPPRESS_RESET_MS = 500;
 	const MIX_CHECK_TIMEOUT_MS = 4000;
-	const STEP_DELAY_MS = 50;
+	const STEP_DELAY_MS = 10;
 	const EFYT_KEY = "enhancer-for-youtube";
 	const PLAYER_PARAMS_MUSIC_PREFIX = "8AUB";
 	const CH_PREFIX = "efyt_ch_speed::";
@@ -82,6 +82,8 @@
 		lastChannelName: null,
 		speedApplied: false,
 		musicChecked: false,
+		speedRequestId: 0,
+		speedInFlight: false,
 		mixAbortController: null,
 		timers:
 		{
@@ -97,6 +99,8 @@
 			this.lastChannelName = null;
 			this.speedApplied = false;
 			this.musicChecked = false;
+			this.speedRequestId++; // cancels any in-flight stepping from the previous video
+			this.speedInFlight = false;
 		},
 
 		abortMixCheck()
@@ -366,14 +370,20 @@
 		dispatchSpeedKey("<", "Comma", 188);
 	}
 
-	async function stepToSpeed(targetPlaybackRate)
+	// Every call gets a request id. If a newer request (or a navigation) bumps
+	// state.speedRequestId, the older stepping loop stops immediately so two
+	// loops can never fight over the playback rate.
+	async function stepToSpeed(targetPlaybackRate, requestId = ++state.speedRequestId)
 	{
+		const isSuperseded = () => requestId !== state.speedRequestId;
 		const videoElement = document.querySelector(SELECTORS.videoElement);
 		if (!videoElement) return false;
 
 		let attemptCount = 0;
 		while (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001 && attemptCount++ < 30)
 		{
+			if (isSuperseded()) return false;
+
 			const previousPlaybackRate = videoElement.playbackRate;
 
 			if (targetPlaybackRate > previousPlaybackRate)
@@ -390,6 +400,8 @@
 			await sleep(STEP_DELAY_MS);
 		}
 
+		if (isSuperseded()) return false;
+
 		if (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001)
 		{
 			const speedUpButton = document.getElementById(SELECTORS.speedUpBtn);
@@ -401,6 +413,7 @@
 				while (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001 && attemptCount++ < 30)
 				{
 					await sleep(STEP_DELAY_MS);
+					if (isSuperseded()) return false;
 
 					const previousPlaybackRate = videoElement.playbackRate;
 
@@ -420,6 +433,8 @@
 			}
 		}
 
+		if (isSuperseded()) return false;
+
 		if (Math.abs(videoElement.playbackRate - targetPlaybackRate) > 0.001)
 		{
 			videoElement.playbackRate = targetPlaybackRate;
@@ -431,11 +446,17 @@
 
 	async function applySpeedWithSuppress(targetPlaybackRate)
 	{
+		const requestId = ++state.speedRequestId;
 		state.suppressSave = true;
+		state.speedInFlight = true;
 		clearTimeout(state.timers.suppress);
 
-		await stepToSpeed(targetPlaybackRate);
+		await stepToSpeed(targetPlaybackRate, requestId);
 
+		// A newer request owns the suppress window now; leave it alone.
+		if (requestId !== state.speedRequestId) return;
+
+		state.speedInFlight = false;
 		state.timers.suppress = setTimeout(() => 
 		{
 			state.suppressSave = false;
@@ -595,7 +616,7 @@
 	{
 		clearTimeout(state.timers.retry);
 		clearTimeout(state.timers.cutoff);
-		state.suppressSave = false;
+		if (!state.speedInFlight) state.suppressSave = false;
 	}
 
 	// NOTE: Unlike a plain setTimeout(clearPolling, delay), this reschedules
@@ -670,16 +691,27 @@
 				state.lastChannelId = channelId;
 				state.lastChannelName = fetchChannelName(playerResponse);
 
-				const savedSpeed = loadChannelSpeed(channelId);
-				const targetSpeed = savedSpeed ?? getEfytDefaultSpeed();
-
-				if (savedSpeed === null)
+				if (MUSIC_SPEED_OVERRIDE !== null && isMusicCategory(playerResponse))
 				{
-					log(`No saved override for ${state.lastChannelName} — using default speed ${targetSpeed}x`);
+					// Music is detected up front, so go straight to the override
+					// instead of stepping to the channel speed first.
+					log(`Music video detected — forcing ${MUSIC_SPEED_OVERRIDE}x speed for ${state.lastChannelName}`);
+					applySpeedWithSuppress(MUSIC_SPEED_OVERRIDE);
+					state.musicChecked = true;
 				}
+				else
+				{
+					const savedSpeed = loadChannelSpeed(channelId);
+					const targetSpeed = savedSpeed ?? getEfytDefaultSpeed();
 
-				log(`Applying speed ${targetSpeed}x for ${state.lastChannelName}`);
-				applySpeedWithSuppress(targetSpeed);
+					if (savedSpeed === null)
+					{
+						log(`No saved override for ${state.lastChannelName} — using default speed ${targetSpeed}x`);
+					}
+
+					log(`Applying speed ${targetSpeed}x for ${state.lastChannelName}`);
+					applySpeedWithSuppress(targetSpeed);
+				}
 				state.speedApplied = true;
 			}
 		}
